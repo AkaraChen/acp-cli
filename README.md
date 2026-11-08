@@ -8,6 +8,8 @@ terminal UI. You get streaming answers, tool calls with diffs, approvals,
 plans, session history and a slash-command popup, all on top of an agent you
 choose. Switch agents mid-conversation and take the conversation with you.
 
+![acpc: a conversation forked from Claude onto OpenCode with /agent](docs/screenshot.png)
+
 ```sh
 acpc add "opencode acp"
 acpc add --name Claude npx -y @agentclientprotocol/claude-agent-acp@latest
