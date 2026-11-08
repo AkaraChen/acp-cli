@@ -10,10 +10,9 @@ loop, so the bridge can ask the user to pick a sign-in method
 (acpc/auth/select) and run a terminal sign-in command with the TUI's
 terminal (acpc/terminal/run) while it is pending.
 ---
- .../src/protocol/v2/acpc.rs                   |   4 +
- codex-rs/tui/src/acpc.rs                      | 118 +++++++
+ codex-rs/tui/src/acpc.rs                      | 115 +++++++
  codex-rs/tui/src/app.rs                       |   1 +
- codex-rs/tui/src/app/acpc.rs                  | 282 ++++++++++++++++
+ codex-rs/tui/src/app/acpc.rs                  | 277 ++++++++++++++++
  codex-rs/tui/src/app/app_server_events.rs     |   3 +
  codex-rs/tui/src/app/event_dispatch.rs        |   3 +
  codex-rs/tui/src/app/tests/startup.rs         |  27 ++
@@ -25,26 +24,11 @@ terminal (acpc/terminal/run) while it is pending.
  codex-rs/tui/src/lib.rs                       |  29 +-
  codex-rs/tui/src/resume_picker.rs             |  23 +-
  codex-rs/tui/src/slash_command.rs             |   9 +
- 15 files changed, 821 insertions(+), 9 deletions(-)
+ 14 files changed, 809 insertions(+), 9 deletions(-)
  create mode 100644 codex-rs/tui/src/app/acpc.rs
 
-diff --git a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
-index 8ad7c58..d8487f0 100644
---- a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
-+++ b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
-@@ -153,6 +153,10 @@ pub struct AcpcAgentListResponse {
- #[ts(export_to = "v2/")]
- pub struct AcpcAgentSelectParams {
-     pub slug: String,
-+    /// Thread whose conversation the agent's next new thread carries over;
-+    /// it is sent along with that thread's first prompt.
-+    #[serde(default)]
-+    pub bring_thread_id: Option<String>,
- }
- 
- #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
-index f919f8d..9ee1c16 100644
+index f919f8d..5892bc3 100644
 --- a/codex-rs/tui/src/acpc.rs
 +++ b/codex-rs/tui/src/acpc.rs
 @@ -84,6 +84,8 @@ pub(crate) fn builtin_allowed(command: crate::slash_command::SlashCommand) -> bo
@@ -56,7 +40,7 @@ index f919f8d..9ee1c16 100644
              | SlashCommand::Keymap
              | SlashCommand::Vim
              | SlashCommand::New
-@@ -122,3 +124,119 @@ pub(crate) fn agent_shadows<'a>(
+@@ -122,3 +124,116 @@ pub(crate) fn agent_shadows<'a>(
  ) -> bool {
      enabled() && !is_reserved(name) && agent_commands.any(|command| command == name)
  }
@@ -93,12 +77,9 @@ index f919f8d..9ee1c16 100644
 +    /// The user picked an agent in /agent; asks about the current
 +    /// conversation first when there is one.
 +    SelectAgent { slug: String },
-+    /// Switch agents (`acpc/agent/select`), then start a new session that
-+    /// carries over `bring_thread_id`'s conversation, if set.
-+    SwitchAgent {
-+        slug: String,
-+        bring_thread_id: Option<String>,
-+    },
++    /// Switch agents (`acpc/agent/select`), then start a new session, or
++    /// fork the current one onto the new agent to bring its conversation.
++    SwitchAgent { slug: String, bring: bool },
 +    SetConfigOption {
 +        config_id: String,
 +        value: codex_app_server_protocol::AcpcSessionConfigInput,
@@ -190,10 +171,10 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..f12e5d1
+index 0000000..a35e1da
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,277 @@
 +//! acpc: app-level handling of ACP agent switching, session options and
 +//! sign-in (see `crate::acpc`).
 +
@@ -249,17 +230,13 @@ index 0000000..f12e5d1
 +                    .transcript_cells
 +                    .iter()
 +                    .any(|cell| cell.as_any().downcast_ref::<UserHistoryCell>().is_some());
-+                match self.chat_widget.thread_id().filter(|_| has_conversation) {
-+                    Some(thread_id) => self
-+                        .chat_widget
-+                        .open_acpc_handoff_prompt(&slug, thread_id.to_string()),
-+                    None => self.switch_acpc_agent(app_server, slug, None),
++                if has_conversation && self.chat_widget.thread_id().is_some() {
++                    self.chat_widget.open_acpc_handoff_prompt(&slug);
++                } else {
++                    self.switch_acpc_agent(app_server, slug, /*bring*/ false);
 +                }
 +            }
-+            AcpcAppEvent::SwitchAgent {
-+                slug,
-+                bring_thread_id,
-+            } => self.switch_acpc_agent(app_server, slug, bring_thread_id),
++            AcpcAppEvent::SwitchAgent { slug, bring } => self.switch_acpc_agent(app_server, slug, bring),
 +            AcpcAppEvent::SetConfigOption { config_id, value } => {
 +                let Some(thread_id) = self.chat_widget.thread_id() else {
 +                    return Ok(AppRunControl::Continue);
@@ -325,21 +302,20 @@ index 0000000..f12e5d1
 +        Ok(AppRunControl::Continue)
 +    }
 +
-+    fn switch_acpc_agent(&self, app_server: &mut AppServerSession, slug: String, bring_thread_id: Option<String>) {
++    fn switch_acpc_agent(&self, app_server: &mut AppServerSession, slug: String, bring: bool) {
 +        // Not awaited here: switching may need the user to sign in through
 +        // acpc/auth/select and acpc/terminal/run, which this loop must stay
 +        // free to serve.
 +        let request = ClientRequest::AcpcAgentSelect {
 +            request_id: app_server.next_request_id(),
-+            params: AcpcAgentSelectParams {
-+                slug,
-+                bring_thread_id,
-+            },
++            params: AcpcAgentSelectParams { slug },
 +        };
 +        let handle = app_server.request_handle();
 +        let tx = self.app_event_tx.clone();
 +        tokio::spawn(async move {
 +            match handle.request_typed::<AcpcAgentSelectResponse>(request).await {
++                // The bridge forks onto the agent just selected.
++                Ok(_) if bring => tx.send(AppEvent::ForkCurrentSession { name: None }),
 +                Ok(_) => tx.send(AppEvent::NewSession { name: None }),
 +                Err(err) => tx.send(AppEvent::Acpc(AcpcAppEvent::Error(format!(
 +                    "Could not switch agent: {err}"
@@ -572,7 +548,7 @@ index 07f509d..f0a625a 100644
          request_id: uuid::Uuid,
          email: Option<String>,
 diff --git a/codex-rs/tui/src/chatwidget/acpc.rs b/codex-rs/tui/src/chatwidget/acpc.rs
-index 7cf491b..a7ee60c 100644
+index 7cf491b..8ae11ba 100644
 --- a/codex-rs/tui/src/chatwidget/acpc.rs
 +++ b/codex-rs/tui/src/chatwidget/acpc.rs
 @@ -1,9 +1,31 @@
@@ -645,7 +621,7 @@ index 7cf491b..a7ee60c 100644
 +    }
 +
 +    /// After /agent picked `slug`: bring the current conversation along?
-+    pub(crate) fn open_acpc_handoff_prompt(&mut self, slug: &str, thread_id: String) {
++    pub(crate) fn open_acpc_handoff_prompt(&mut self, slug: &str) {
 +        let name = self
 +            .acpc
 +            .agents
@@ -656,10 +632,10 @@ index 7cf491b..a7ee60c 100644
 +        let items = vec![
 +            SelectionItem {
 +                name: "Bring this conversation".to_string(),
-+                description: Some(format!("{name} gets it with your next message")),
++                description: Some(format!("Fork it to {name}, which gets it with your next message")),
 +                actions: vec![send(AcpcAppEvent::SwitchAgent {
 +                    slug: slug.to_string(),
-+                    bring_thread_id: Some(thread_id),
++                    bring: true,
 +                })],
 +                dismiss_on_select: true,
 +                ..Default::default()
@@ -669,7 +645,7 @@ index 7cf491b..a7ee60c 100644
 +                description: Some("This conversation stays available in /resume".to_string()),
 +                actions: vec![send(AcpcAppEvent::SwitchAgent {
 +                    slug: slug.to_string(),
-+                    bring_thread_id: None,
++                    bring: false,
 +                })],
 +                dismiss_on_select: true,
 +                ..Default::default()

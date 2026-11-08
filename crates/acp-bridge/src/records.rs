@@ -13,6 +13,7 @@ use codex_app_server_protocol::ReasoningEffortOption;
 use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::Thread;
+use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadItemPayload;
@@ -93,7 +94,7 @@ pub(crate) fn thread(state: &ThreadState, include_turns: bool) -> Thread {
         environments: None,
         extra: None,
         session_id: state.id.clone(),
-        forked_from_id: None,
+        forked_from_id: state.forked_from.as_ref().map(crate::handoff::Parent::thread_id),
         parent_thread_id: None,
         preview: state.preview.clone(),
         ephemeral: false,
@@ -155,6 +156,25 @@ fn sandbox_policy() -> SandboxPolicy {
 pub(crate) fn thread_start_response(state: &ThreadState) -> ThreadStartResponse {
     ThreadStartResponse {
         thread: thread(state, false),
+        model: state.model_label(),
+        model_provider: state.agent.clone(),
+        service_tier: None,
+        disabled_plugin_ids: Vec::new(),
+        cwd: state.cwd.clone(),
+        runtime_workspace_roots: Vec::new(),
+        instruction_sources: Vec::new(),
+        approval_policy: approval_policy(),
+        approvals_reviewer: ApprovalsReviewer::User,
+        sandbox: sandbox_policy(),
+        active_permission_profile: None,
+        reasoning_effort: state.reasoning_effort(),
+        multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
+    }
+}
+
+pub(crate) fn thread_fork_response(state: &ThreadState) -> ThreadForkResponse {
+    ThreadForkResponse {
+        thread: thread(state, true),
         model: state.model_label(),
         model_provider: state.agent.clone(),
         service_tier: None,

@@ -1,19 +1,20 @@
-//! Carrying a conversation to another agent (`/agent`, "Bring this
-//! conversation"). ACP has no way to import history, so the transcript goes
-//! with the new thread's first prompt: as an embedded resource with an
-//! `acpc://handoff/…` URI when the agent accepts embedded context, else as a
-//! text block between markers. The user never sees it: live turns record
-//! only what the user typed, and replays drop it (`is_handoff`, `strip`).
+//! Forking a conversation into a new session (`thread/fork`; `/agent` uses
+//! it to bring a conversation to another agent). ACP has no way to import
+//! history, so the transcript goes with the fork's first prompt: as an
+//! embedded resource with an `acpc://handoff/<agent>/<session>` URI when the
+//! agent accepts embedded context, else as text between markers. The user
+//! never sees it: live turns record only what the user typed, and replays
+//! drop it, keeping only which session it came from (`parent`).
 
 use acp_client::schema as acp;
 use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::UserInput;
 
-use crate::server::Bridge;
 use crate::threads::ThreadState;
+use crate::threads::thread_id_for;
 
 const URI_PREFIX: &str = "acpc://handoff/";
-const TEXT_OPEN: &str = "<acpc-handoff>";
+const TEXT_OPEN: &str = "<acpc-handoff uri=\"";
 const TEXT_CLOSE: &str = "</acpc-handoff>";
 /// Transcript budget in characters; the oldest exchanges are dropped first.
 const MAX_CHARS: usize = 60_000;
@@ -21,29 +22,45 @@ const MAX_CHARS: usize = 60_000;
 /// A conversation waiting to go out with a thread's first prompt.
 #[derive(Debug, Clone)]
 pub(crate) struct Handoff {
-    pub(crate) from_name: String,
     uri: String,
     text: String,
 }
 
-/// The thread just created on `agent` carries over the conversation the
-/// user asked for when switching to it, if any.
-pub(crate) fn attach(bridge: &mut Bridge, agent: &str, thread_id: &str) {
-    let Some((target, from)) = bridge.agents.handoff.take() else {
-        return;
-    };
-    if target != agent {
-        return;
+/// The session a fork started from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Parent {
+    pub(crate) agent: String,
+    pub(crate) session_id: String,
+}
+
+impl Parent {
+    pub(crate) fn of(thread: &ThreadState) -> Option<Self> {
+        Some(Self {
+            agent: thread.agent.clone(),
+            session_id: thread.session_id.as_ref()?.to_string(),
+        })
     }
-    let Some(handoff) = bridge.threads.get(&from).and_then(build) else {
-        return;
-    };
-    if let Some(thread) = bridge.threads.get_mut(thread_id) {
-        thread.handoff = Some(handoff);
+
+    pub(crate) fn thread_id(&self) -> String {
+        thread_id_for(&self.agent, &self.session_id)
+    }
+
+    fn uri(&self) -> String {
+        format!("{URI_PREFIX}{}/{}", self.agent, self.session_id)
+    }
+
+    fn from_uri(uri: &str) -> Option<Self> {
+        let (agent, session_id) = uri.strip_prefix(URI_PREFIX)?.split_once('/')?;
+        Some(Self {
+            agent: agent.to_string(),
+            session_id: session_id.to_string(),
+        })
     }
 }
 
-fn build(from: &ThreadState) -> Option<Handoff> {
+/// The transcript of `from` for its fork's first prompt.
+pub(crate) fn build(from: &ThreadState) -> Option<Handoff> {
+    let parent = Parent::of(from)?;
     let mut exchanges: Vec<String> = from
         .turns
         .iter()
@@ -74,7 +91,6 @@ fn build(from: &ThreadState) -> Option<Handoff> {
     if omitted > 0 {
         transcript = format!("({omitted} earlier exchanges omitted)\n\n{transcript}");
     }
-    let session = from.session_id.as_ref().map(ToString::to_string).unwrap_or_default();
     let text = format!(
         "The user was working with {name} in acpc and switched to you. Their conversation so far \
          follows, for context; continue from it. (They can go back to it with `acpc resume {id}`.)\n\n\
@@ -83,8 +99,7 @@ fn build(from: &ThreadState) -> Option<Handoff> {
         id = from.id,
     );
     Some(Handoff {
-        from_name: from.agent_name.clone(),
-        uri: format!("{URI_PREFIX}{}/{session}", from.agent),
+        uri: parent.uri(),
         text,
     })
 }
@@ -126,20 +141,31 @@ pub(crate) fn block(handoff: &Handoff, embedded_context: bool) -> acp::ContentBl
             acp::EmbeddedResourceResource::TextResourceContents(contents),
         ));
     }
-    acp::ContentBlock::Text(acp::TextContent::new(format!("{TEXT_OPEN}\n{}\n{TEXT_CLOSE}", handoff.text)))
+    acp::ContentBlock::Text(acp::TextContent::new(format!(
+        "{TEXT_OPEN}{}\">\n{}\n{TEXT_CLOSE}",
+        handoff.uri, handoff.text
+    )))
+}
+
+/// The session a replayed user block says this one was forked from.
+pub(crate) fn parent(block: &acp::ContentBlock) -> Option<Parent> {
+    match block {
+        acp::ContentBlock::Resource(resource) => match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => Parent::from_uri(&text.uri),
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => Parent::from_uri(&blob.uri),
+            _ => None,
+        },
+        acp::ContentBlock::Text(text) => {
+            let rest = text.text.strip_prefix(TEXT_OPEN)?;
+            Parent::from_uri(rest.split_once('"')?.0)
+        }
+        _ => None,
+    }
 }
 
 /// A replayed user block that is a handoff resource.
 pub(crate) fn is_handoff(block: &acp::ContentBlock) -> bool {
-    let acp::ContentBlock::Resource(resource) = block else {
-        return false;
-    };
-    let uri = match &resource.resource {
-        acp::EmbeddedResourceResource::TextResourceContents(text) => &text.uri,
-        acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
-        _ => return false,
-    };
-    uri.starts_with(URI_PREFIX)
+    matches!(block, acp::ContentBlock::Resource(_)) && parent(block).is_some()
 }
 
 /// Replayed user text without a leading text-form handoff; `None` when
@@ -159,22 +185,31 @@ mod tests {
 
     fn handoff() -> Handoff {
         Handoff {
-            from_name: "Claude".to_string(),
             uri: format!("{URI_PREFIX}claude/s1"),
             text: "User: hi\n\nClaude: hello".to_string(),
         }
+    }
+
+    fn claude_s1() -> Option<Parent> {
+        Some(Parent {
+            agent: "claude".to_string(),
+            session_id: "s1".to_string(),
+        })
     }
 
     #[test]
     fn resource_form_is_recognized_on_replay() {
         let block = block(&handoff(), true);
         assert!(is_handoff(&block));
+        assert_eq!(parent(&block), claude_s1());
         assert!(!is_handoff(&acp::ContentBlock::Text(acp::TextContent::new("hi"))));
     }
 
     #[test]
     fn text_form_is_stripped_on_replay() {
-        let acp::ContentBlock::Text(text) = block(&handoff(), false) else {
+        let block = block(&handoff(), false);
+        assert_eq!(parent(&block), claude_s1());
+        let acp::ContentBlock::Text(text) = block else {
             panic!("text block expected");
         };
         assert_eq!(strip(&text.text), None);

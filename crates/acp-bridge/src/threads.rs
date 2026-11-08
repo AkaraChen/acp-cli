@@ -77,6 +77,8 @@ pub(crate) struct ThreadState {
     pub(crate) agent_name: String,
     /// Sent with the first prompt, then cleared.
     pub(crate) handoff: Option<crate::handoff::Handoff>,
+    /// The session this thread was forked from.
+    pub(crate) forked_from: Option<crate::handoff::Parent>,
 }
 
 impl ThreadState {
@@ -102,6 +104,7 @@ impl ThreadState {
             image_input: false,
             agent_name,
             handoff: None,
+            forked_from: None,
         }
     }
 
@@ -365,12 +368,14 @@ pub(crate) fn usage_updated(thread_id: &str, turn_id: &str, used: u64, size: u64
 }
 
 /// `thread/start`: connect the agent if needed, then `session/new`.
+/// `thread/start`, or `thread/fork` when `fork` names the source thread.
 pub(crate) fn start(
     bridge: &mut Bridge,
     conn: ConnectionId,
     id: RequestId,
     agent: String,
     cwd: AbsolutePathBuf,
+    fork: Option<String>,
 ) {
     let mcp_servers = bridge.options.mcp_servers.clone();
     let prepared = bridge.agents.take_prepared(&agent, &cwd);
@@ -391,7 +396,7 @@ pub(crate) fn start(
                 }
             };
             if let Some(response) = prepared {
-                adopt_new_session(bridge, conn, id, &agent, cwd, &connection, response);
+                adopt_new_session(bridge, conn, id, &agent, cwd, &connection, response, fork);
                 return;
             }
             let request = acp::NewSessionRequest::new(cwd.as_path().to_path_buf())
@@ -400,7 +405,7 @@ pub(crate) fn start(
                 let result = connection.new_session(request).await;
                 move |bridge: &mut Bridge| match result {
                     Ok(response) => {
-                        adopt_new_session(bridge, conn, id, &agent, cwd, &connection, response);
+                        adopt_new_session(bridge, conn, id, &agent, cwd, &connection, response, fork);
                     }
                     Err(err) => {
                         let code = if err.is_auth_required() {
@@ -421,6 +426,7 @@ pub(crate) fn start(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn adopt_new_session(
     bridge: &mut Bridge,
     conn: ConnectionId,
@@ -429,6 +435,7 @@ fn adopt_new_session(
     cwd: AbsolutePathBuf,
     connection: &Arc<AgentConnection>,
     response: acp::NewSessionResponse,
+    fork: Option<String>,
 ) {
     // The session died with its process if the agent exited meanwhile.
     if !bridge.agents.is_live(agent, connection) {
@@ -452,10 +459,20 @@ fn adopt_new_session(
     state.loaded = true;
     state.image_input = connection.caps().prompt_image();
     state.apply_session_setup(response.config_options, response.modes);
-    let reply = records::thread_start_response(&state);
-    let thread = reply.thread.clone();
+    // A fork shows the source's turns; the agent gets them as a transcript
+    // with the first prompt.
+    if let Some(source) = fork.as_deref().and_then(|source| bridge.threads.get(source)) {
+        state.turns = source.turns.clone();
+        state.handoff = crate::handoff::build(source);
+        state.forked_from = crate::handoff::Parent::of(source);
+    }
+    let thread = records::thread(&state, fork.is_some());
+    let reply: codex_app_server_protocol::ClientResponsePayload = if fork.is_some() {
+        records::thread_fork_response(&state).into()
+    } else {
+        records::thread_start_response(&state).into()
+    };
     bridge.threads.insert(state);
-    crate::handoff::attach(bridge, agent, &thread_id);
     note_resumable(bridge, &thread_id, connection);
     for update in bridge.threads.take_orphans(&thread_id) {
         on_session_update(bridge, agent, update);
@@ -569,12 +586,6 @@ pub(crate) fn start_turn(
     }));
     if let Some(handoff) = handoff {
         prompt.insert(0, crate::handoff::block(&handoff, connection.caps().prompt_embedded_context()));
-        bridge.notify(ServerNotification::AcpcNotice(codex_app_server_protocol::AcpcNoticeNotification {
-            thread_id: Some(thread_id_owned.clone()),
-            severity: "info".to_string(),
-            title: format!("Sent your conversation with {} along with this message.", handoff.from_name),
-            description: None,
-        }));
     }
 
     bridge.spawn(async move {

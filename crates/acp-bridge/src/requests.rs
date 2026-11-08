@@ -191,7 +191,17 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
                 .and_then(serde_json::Value::as_str)
                 .map_or_else(|| bridge.agents.current.clone(), str::to_string);
             let cwd = history::absolute_cwd(bridge, params.cwd.as_deref());
-            threads::start(bridge, conn, request_id, agent, cwd);
+            threads::start(bridge, conn, request_id, agent, cwd, None);
+        }
+        // A new session on the current agent that starts from the source's
+        // conversation (`/agent` → "Bring this conversation").
+        ClientRequest::ThreadFork { request_id, params } => {
+            let Some(cwd) = bridge.threads.get(&params.thread_id).map(|thread| thread.cwd.clone()) else {
+                bridge.respond_error(conn, request_id, INVALID_REQUEST, format!("unknown thread {}", params.thread_id));
+                return;
+            };
+            let agent = bridge.agents.current.clone();
+            threads::start(bridge, conn, request_id, agent, cwd, Some(params.thread_id));
         }
         ClientRequest::ThreadResume { request_id, params } => {
             history::resume(bridge, conn, request_id, params.thread_id);
@@ -296,7 +306,7 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
             bridge.respond(conn, request_id, response);
         }
         ClientRequest::AcpcAgentSelect { request_id, params } => {
-            crate::select::select(bridge, conn, request_id, params.slug, params.bring_thread_id);
+            crate::select::select(bridge, conn, request_id, params.slug);
         }
         ClientRequest::AcpcSessionConfigSet { request_id, params } => {
             let value = match params.value {

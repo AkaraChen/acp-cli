@@ -467,6 +467,12 @@ fn resume_without_history(
 
 /// Fold one replayed update into the history being rebuilt.
 pub(crate) fn on_replay_update(thread: &mut ThreadState, update: acp::SessionUpdate) {
+    // A fork's first prompt carried its source's transcript (hidden below).
+    if let acp::SessionUpdate::UserMessageChunk(chunk) = &update
+        && let Some(parent) = crate::handoff::parent(&chunk.content)
+    {
+        thread.forked_from = Some(parent);
+    }
     let thread_id = thread.id.clone();
     let cwd = thread.cwd.as_path().to_path_buf();
     let Some(replay) = thread.replay.as_mut() else {
@@ -539,13 +545,35 @@ pub(crate) fn on_load_finished(
             thread.apply_session_setup(response.config_options, response.modes);
             let reply = records::thread_resume_response(thread);
             let thread_id = thread.id.clone();
+            let lineage = thread.forked_from.clone().map(|parent| (parent, thread.cwd.clone()));
             bridge.respond(conn, id, reply);
+            if let Some((parent, cwd)) = lineage {
+                register_parent(bridge, &parent, cwd);
+            }
             if let Some(thread) = bridge.threads.get(&thread_id) {
                 crate::ext::thread_state(bridge, thread);
             }
         }
         Err(err) => bridge.respond_error(conn, id, INTERNAL_ERROR, err.message),
     }
+}
+
+/// Make a fork's source known (the client looks up its title; `/resume`)
+/// without starting its agent.
+fn register_parent(bridge: &mut Bridge, parent: &crate::handoff::Parent, cwd: AbsolutePathBuf) {
+    let id = parent.thread_id();
+    if bridge.threads.get(&id).is_some() {
+        return;
+    }
+    let name = bridge
+        .agents
+        .profile(&parent.agent)
+        .map_or_else(|| parent.agent.clone(), |profile| profile.name.clone());
+    let mut state = ThreadState::new(id, parent.agent.clone(), name, cwd);
+    state.session_id = Some(acp::SessionId::new(parent.session_id.as_str()));
+    state.created_at = 0;
+    state.updated_at = 0;
+    bridge.threads.insert(state);
 }
 
 fn first_user_text(thread: &ThreadState) -> Option<String> {

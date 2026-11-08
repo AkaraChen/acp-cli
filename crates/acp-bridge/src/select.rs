@@ -38,8 +38,6 @@ type SignedIn = Box<dyn FnOnce(&mut Bridge, Result<(), String>) + Send>;
 struct Reply {
     conn: ConnectionId,
     id: RequestId,
-    /// Thread whose conversation the agent's next thread carries over.
-    bring: Option<String>,
 }
 
 impl Reply {
@@ -48,18 +46,12 @@ impl Reply {
     }
 }
 
-pub(crate) fn select(
-    bridge: &mut Bridge,
-    conn: ConnectionId,
-    id: RequestId,
-    slug: String,
-    bring: Option<String>,
-) {
+pub(crate) fn select(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, slug: String) {
     if bridge.agents.profile(&slug).is_none() {
         bridge.respond_error(conn, id, INVALID_PARAMS, format!("unknown agent `{slug}`"));
         return;
     }
-    probe(bridge, slug, Reply { conn, id, bring }, 0);
+    probe(bridge, slug, Reply { conn, id }, 0);
 }
 
 /// Connect and create the agent's first session.
@@ -88,7 +80,6 @@ fn probe(bridge: &mut Bridge, slug: String, reply: Reply, attempts: u32) {
                     }
                     Ok(session) => {
                         bridge.agents.set_prepared(&slug, cwd, session);
-                        bridge.agents.handoff = reply.bring.clone().map(|from| (slug.clone(), from));
                         bridge.agents.current = slug;
                         bridge.respond(reply.conn, reply.id.clone(), AcpcAgentSelectResponse {});
                         crate::ext::agents_updated(bridge);
