@@ -1,10 +1,12 @@
 //! The bridge actor: transport plumbing, JSON-RPC bookkeeping, dispatch.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use acp_client::AgentEvent;
 use acp_client::ClientOptions;
@@ -44,6 +46,10 @@ pub(crate) const INVALID_PARAMS: i64 = -32602;
 pub(crate) const INVALID_REQUEST: i64 = -32600;
 pub(crate) const INTERNAL_ERROR: i64 = -32603;
 
+/// How long a stdio client's in-flight requests and turns may run after it
+/// closes stdin (upstream's app-server drains RPCs for the same time).
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Static configuration for one bridge instance.
 #[derive(Clone)]
 pub struct BridgeOptions {
@@ -79,7 +85,8 @@ pub async fn start(
     shutdown: CancellationToken,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     let (transport_tx, mut transport_rx) = mpsc::channel::<TransportEvent>(CHANNEL_CAPACITY);
-    let stdio = matches!(transport, BridgeTransport::Stdio);
+    // One client that can hang up while work is in flight (stdin EOF).
+    let single_client = !matches!(transport, BridgeTransport::UnixSocket(_));
     match transport {
         BridgeTransport::Channel(events) => {
             transport_rx = events;
@@ -112,23 +119,31 @@ pub async fn start(
         bridge.adopt_connected_agent(agent);
     }
     Ok(tokio::spawn(async move {
+        let mut drain_until: Option<tokio::time::Instant> = None;
         loop {
+            if drain_until.is_some() && bridge.drained() {
+                break;
+            }
             tokio::select! {
                 () = shutdown.cancelled() => break,
-                event = transport_rx.recv() => {
-                    let Some(event) = event else { break };
-                    let closed = matches!(event, TransportEvent::ConnectionClosed { .. });
-                    bridge.on_transport_event(event);
-                    if stdio && closed {
-                        break;
+                () = tokio::time::sleep_until(drain_until.unwrap_or_else(tokio::time::Instant::now)),
+                    if drain_until.is_some() => break,
+                event = transport_rx.recv(), if drain_until.is_none() => match event {
+                    Some(TransportEvent::ConnectionClosed { .. }) | None if single_client => {
+                        // Finish what the client is still waiting for, then stop.
+                        bridge.begin_drain();
+                        drain_until = Some(tokio::time::Instant::now() + DRAIN_TIMEOUT);
                     }
-                }
+                    None => break,
+                    Some(event) => bridge.on_transport_event(event),
+                },
                 input = rx.recv() => {
                     let Some(input) = input else { break };
                     bridge.on_input(input);
                 }
             }
         }
+        bridge.close_connections().await;
         bridge.shutdown().await;
     }))
 }
@@ -158,6 +173,8 @@ pub(crate) enum Input {
 
 struct Connection {
     out: mpsc::UnboundedSender<OutgoingMessage>,
+    /// Ends once everything sent to `out` is written.
+    forwarder: tokio::task::JoinHandle<()>,
     initialized: bool,
 }
 
@@ -176,6 +193,10 @@ pub(crate) struct Bridge {
     connections: HashMap<ConnectionId, Connection>,
     server_requests: HashMap<RequestId, PendingServerRequest>,
     next_server_request_id: i64,
+    /// Client requests not answered yet.
+    in_flight: RefCell<HashSet<(ConnectionId, RequestId)>>,
+    /// The stdio client hung up; no one can answer server requests.
+    draining: bool,
     /// Agent permission/elicitation requests shown to the client.
     pub(crate) agent_requests: HashMap<AgentRequestKey, AgentRequest>,
     pub(crate) agents: Agents,
@@ -191,6 +212,8 @@ impl Bridge {
             connections: HashMap::new(),
             server_requests: HashMap::new(),
             next_server_request_id: 1,
+            in_flight: RefCell::default(),
+            draining: false,
             agent_requests: HashMap::new(),
             agents,
             threads: Threads::default(),
@@ -233,27 +256,35 @@ impl Bridge {
                 ..
             } => {
                 let (out, mut out_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
-                tokio::spawn(async move {
+                let forwarder = tokio::spawn(async move {
+                    let mut last_write = None;
                     while let Some(message) = out_rx.recv().await {
-                        if writer
-                            .send(QueuedOutgoingMessage::new(message))
-                            .await
-                            .is_err()
-                        {
-                            break;
+                        let (written_tx, written_rx) = oneshot::channel();
+                        let message = QueuedOutgoingMessage {
+                            message,
+                            write_complete_tx: Some(written_tx),
+                        };
+                        if writer.send(message).await.is_err() {
+                            return;
                         }
+                        last_write = Some(written_rx);
+                    }
+                    if let Some(written) = last_write {
+                        let _ = written.await;
                     }
                 });
                 self.connections.insert(
                     connection_id,
                     Connection {
                         out,
+                        forwarder,
                         initialized: false,
                     },
                 );
             }
             TransportEvent::ConnectionClosed { connection_id } => {
                 self.connections.remove(&connection_id);
+                self.in_flight.borrow_mut().retain(|(conn, _)| *conn != connection_id);
             }
             TransportEvent::IncomingMessage {
                 connection_id,
@@ -271,6 +302,7 @@ impl Bridge {
                 match ClientRequest::try_from(request) {
                     Ok(request) => {
                         tracing::debug!(%method, "client request");
+                        self.in_flight.borrow_mut().insert((conn, id));
                         crate::requests::dispatch(self, conn, request);
                     }
                     Err(err) => {
@@ -313,6 +345,7 @@ impl Bridge {
         id: RequestId,
         payload: impl Into<ClientResponsePayload>,
     ) {
+        self.in_flight.borrow_mut().remove(&(conn, id.clone()));
         self.send(
             conn,
             OutgoingMessage::Response(OutgoingResponse {
@@ -340,6 +373,7 @@ impl Bridge {
         message: impl Into<String>,
         data: Option<serde_json::Value>,
     ) {
+        self.in_flight.borrow_mut().remove(&(conn, id.clone()));
         self.send(
             conn,
             OutgoingMessage::Error(OutgoingError {
@@ -377,8 +411,16 @@ impl Bridge {
         let id = RequestId::Integer(self.next_server_request_id);
         self.next_server_request_id += 1;
         let request = make(id.clone());
-        for connection in self.connections.values().filter(|c| c.initialized) {
-            let _ = connection.out.send(OutgoingMessage::Request(request.clone()));
+        if self.draining {
+            // Nobody can answer; resolve it once the caller has recorded it.
+            let id = id.clone();
+            let _ = self.tx.send(Input::Apply(Box::new(move |bridge: &mut Bridge| {
+                bridge.on_server_request_result(id, Err(client_gone()));
+            })));
+        } else {
+            for connection in self.connections.values().filter(|c| c.initialized) {
+                let _ = connection.out.send(OutgoingMessage::Request(request.clone()));
+            }
         }
         self.server_requests.insert(
             id.clone(),
@@ -460,7 +502,41 @@ impl Bridge {
         }
     }
 
+    /// The stdio client closed stdin: it can no longer answer server
+    /// requests, but still reads what is in flight.
+    fn begin_drain(&mut self) {
+        self.draining = true;
+        let ids: Vec<RequestId> = self.server_requests.keys().cloned().collect();
+        for id in ids {
+            self.on_server_request_result(id, Err(client_gone()));
+        }
+    }
+
+    fn drained(&self) -> bool {
+        self.in_flight.borrow().is_empty() && !self.threads.any_active()
+    }
+
+    /// Stop accepting output and wait until what was sent is written.
+    async fn close_connections(&mut self) {
+        let forwarders: Vec<_> = self
+            .connections
+            .drain()
+            .map(|(_, connection)| connection.forwarder)
+            .collect();
+        for forwarder in forwarders {
+            let _ = tokio::time::timeout(Duration::from_secs(5), forwarder).await;
+        }
+    }
+
     async fn shutdown(&mut self) {
         self.agents.shutdown_all().await;
+    }
+}
+
+fn client_gone() -> JSONRPCErrorError {
+    JSONRPCErrorError {
+        code: INTERNAL_ERROR,
+        data: None,
+        message: "the client disconnected".to_string(),
     }
 }

@@ -328,6 +328,26 @@ impl Harness {
         result["thread"]["id"].as_str().expect("thread id").to_string()
     }
 
+    /// Close the connection, as a stdio client does by closing stdin.
+    pub async fn hang_up(&mut self) {
+        self.tx
+            .send(TransportEvent::ConnectionClosed {
+                connection_id: ConnectionId(1),
+            })
+            .await
+            .expect("hang up");
+    }
+
+    /// Wait until the bridge has written everything and let go of the
+    /// connection.
+    pub async fn wait_closed(&mut self) {
+        while tokio::time::timeout(TIMEOUT, self.rx.recv())
+            .await
+            .expect("bridge did not stop")
+            .is_some()
+        {}
+    }
+
     pub async fn send_turn(&mut self, thread_id: &str, text: &str) -> Value {
         self.request(
             "turn/start",

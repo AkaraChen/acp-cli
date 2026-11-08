@@ -151,6 +151,10 @@ impl Threads {
         self.by_id.remove(id)
     }
 
+    pub(crate) fn any_active(&self) -> bool {
+        self.by_id.values().any(|thread| thread.active.is_some())
+    }
+
     pub(crate) fn loaded_ids(&self) -> Vec<String> {
         self.by_id
             .values()

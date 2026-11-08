@@ -60,10 +60,9 @@ fn register_listed(
     state.session_id = Some(info.session_id.clone());
     state.title = info.title.clone();
     state.preview = info.title.clone().unwrap_or_default();
-    if let Some(updated_at) = updated_at {
-        state.updated_at = updated_at;
-        state.created_at = updated_at;
-    }
+    // 0 means unknown: acpc's TUI shows "-" for it instead of "now".
+    state.updated_at = updated_at.unwrap_or(0);
+    state.created_at = state.updated_at;
     bridge.threads.insert(state);
     Some(id)
 }

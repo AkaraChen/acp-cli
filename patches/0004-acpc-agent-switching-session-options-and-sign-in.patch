@@ -12,7 +12,7 @@ terminal (acpc/terminal/run) while it is pending.
 ---
  codex-rs/tui/src/acpc.rs                      | 111 +++++++
  codex-rs/tui/src/app.rs                       |   1 +
- codex-rs/tui/src/app/acpc.rs                  | 258 +++++++++++++++++
+ codex-rs/tui/src/app/acpc.rs                  | 261 +++++++++++++++++
  codex-rs/tui/src/app/app_server_events.rs     |   3 +
  codex-rs/tui/src/app/event_dispatch.rs        |   3 +
  codex-rs/tui/src/app/tests/startup.rs         |  27 ++
@@ -22,8 +22,9 @@ terminal (acpc/terminal/run) while it is pending.
  codex-rs/tui/src/chatwidget/interaction.rs    |   8 +
  codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
  codex-rs/tui/src/lib.rs                       |  29 +-
+ codex-rs/tui/src/resume_picker.rs             |  23 +-
  codex-rs/tui/src/slash_command.rs             |   9 +
- 13 files changed, 726 insertions(+), 5 deletions(-)
+ 14 files changed, 748 insertions(+), 9 deletions(-)
  create mode 100644 codex-rs/tui/src/app/acpc.rs
 
 diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
@@ -166,10 +167,10 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..5ee3a3d
+index 0000000..2f06796
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,261 @@
 +//! acpc: app-level handling of ACP agent switching, session options and
 +//! sign-in (see `crate::acpc`).
 +
@@ -328,6 +329,9 @@ index 0000000..5ee3a3d
 +        #[cfg(unix)]
 +        let mut interrupts =
 +            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
++        // Ctrl+\ likewise; registering the handler is enough to catch it.
++        #[cfg(unix)]
++        let _quits = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::quit())?;
 +        #[cfg(windows)]
 +        let mut interrupts = tokio::signal::windows::ctrl_c()?;
 +        crossterm::terminal::disable_raw_mode()?;
@@ -940,6 +944,52 @@ index 5dd2826..a8679be 100644
      {
          let resumed_thread = if matches!(app_server_target, AppServerTarget::LocalDaemon { .. })
              && let resume_picker::SessionSelection::Resume(target) = &session_selection
+diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
+index d2d45d3..84a7fe9 100644
+--- a/codex-rs/tui/src/resume_picker.rs
++++ b/codex-rs/tui/src/resume_picker.rs
+@@ -2496,15 +2496,22 @@ fn row_from_app_server_thread(thread: Thread) -> Option<Row> {
+         },
+         thread_id: Some(thread_id),
+         thread_name: thread.name,
+-        created_at: chrono::DateTime::from_timestamp(thread.created_at, 0)
+-            .map(|dt| dt.with_timezone(&Utc)),
+-        updated_at: chrono::DateTime::from_timestamp(thread.updated_at, 0)
+-            .map(|dt| dt.with_timezone(&Utc)),
++        created_at: picker_timestamp(thread.created_at),
++        updated_at: picker_timestamp(thread.updated_at),
+         cwd: Some(thread.cwd.to_path_buf()),
+         git_branch: thread.git_info.and_then(|git_info| git_info.branch),
+     })
+ }
+ 
++/// acpc: agents may list sessions without a time, which the bridge sends
++/// as 0; show those as unknown rather than 1970.
++fn picker_timestamp(seconds: i64) -> Option<DateTime<Utc>> {
++    if seconds == 0 && crate::acpc::enabled() {
++        return None;
++    }
++    chrono::DateTime::from_timestamp(seconds, 0).map(|dt| dt.with_timezone(&Utc))
++}
++
+ fn thread_list_params(
+     cursor: Option<String>,
+     cwd_filter: Option<ThreadListCwdFilter>,
+@@ -4668,6 +4675,14 @@ mod tests {
+         assert!(row.matches_query(&thread_id.to_string()[..8]));
+     }
+ 
++    #[test]
++    fn acpc_shows_a_zero_session_time_as_unknown() {
++        assert!(picker_timestamp(0).is_some());
++        let _acpc = crate::acpc::enable_for_test();
++        assert_eq!(picker_timestamp(0), None);
++        assert!(picker_timestamp(1).is_some());
++    }
++
+     #[test]
+     fn relative_time_formats_zero_seconds_as_now() {
+         let reference = DateTime::parse_from_rfc3339("2026-05-02T12:00:00Z")
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
 index 18f8ae6..342c30d 100644
 --- a/codex-rs/tui/src/slash_command.rs

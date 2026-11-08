@@ -605,3 +605,14 @@ async fn only_threads_their_agent_can_reopen_are_resumable() {
     assert!(resumable.contains(&listed));
     assert!(!resumable.contains(&unlisted));
 }
+
+#[tokio::test]
+async fn hang_up_lets_the_running_turn_finish_then_stops() {
+    let mut harness = Harness::start(HarnessConfig::default()).await;
+    let thread_id = harness.start_thread().await;
+    harness.send_turn(&thread_id, "slow").await;
+    harness.hang_up().await;
+    let completed = harness.next("turn/completed").await;
+    assert_eq!(completed["params"]["turn"]["status"], "completed");
+    harness.wait_closed().await;
+}
