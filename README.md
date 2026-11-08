@@ -47,7 +47,7 @@ You need Rust (the toolchain installs itself from `rust-toolchain.toml`),
 `git`, a C compiler, OpenSSL headers and [just](https://github.com/casey/just).
 
 ```sh
-git clone https://github.com/AkaraChen/acp-cli && cd acp-cli
+git clone https://github.com/AkaraChen/acpc && cd acpc
 scripts/sync-upstream          # fetch Codex at the pinned commit, apply patches/
 just build                     # → target/debug/acpc
 ```
