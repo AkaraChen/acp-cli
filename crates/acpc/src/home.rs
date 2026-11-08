@@ -52,6 +52,15 @@ enabled = false
 exporter = "none"
 trace_exporter = "none"
 metrics_exporter = "none"
+
+# Codex's welcome art, tips and server-version notices describe Codex, not
+# the ACP agent.
+[tui]
+show_tooltips = false
+show_server_version_notice = false
+
+[tui.effects]
+welcome = false
 "#;
 
 pub struct Home {

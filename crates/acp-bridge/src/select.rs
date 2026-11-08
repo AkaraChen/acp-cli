@@ -13,12 +13,14 @@ use acp_client::AgentConnection;
 use acp_client::TerminalAuthCommand;
 use acp_client::schema as acp;
 use codex_app_server_protocol::AcpcAgentSelectResponse;
+use codex_app_server_protocol::AcpcNoticeNotification;
 use codex_app_server_protocol::AcpcAuthMethod;
 use codex_app_server_protocol::AcpcAuthSelectParams;
 use codex_app_server_protocol::AcpcAuthSelectResponse;
 use codex_app_server_protocol::AcpcTerminalRunParams;
 use codex_app_server_protocol::AcpcTerminalRunResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_transport::ConnectionId;
 
@@ -28,6 +30,9 @@ use crate::server::INVALID_PARAMS;
 
 /// Sign-in attempts before giving up on an agent that keeps asking.
 const MAX_AUTH_ATTEMPTS: u32 = 2;
+
+/// Runs once a sign-in attempt ends; `Err` carries what to tell the user.
+type SignedIn = Box<dyn FnOnce(&mut Bridge, Result<(), String>) + Send>;
 
 #[derive(Clone)]
 struct Reply {
@@ -80,7 +85,12 @@ fn probe(bridge: &mut Bridge, slug: String, reply: Reply, attempts: u32) {
                         crate::ext::agents_updated(bridge);
                     }
                     Err(err) if err.is_auth_required() && attempts < MAX_AUTH_ATTEMPTS => {
-                        sign_in(bridge, slug, connection, reply, attempts);
+                        let retry = slug.clone();
+                        let done: SignedIn = Box::new(move |bridge, result| match result {
+                            Ok(()) => probe(bridge, retry, reply, attempts + 1),
+                            Err(err) => reply.error(bridge, err),
+                        });
+                        sign_in(bridge, slug, connection, done);
                     }
                     Err(err) => reply.error(
                         bridge,
@@ -115,23 +125,52 @@ fn auth_methods(connection: &AgentConnection) -> Vec<AcpcAuthMethod> {
         .collect()
 }
 
-/// Ask the user for a sign-in method, run it, then probe again.
-fn sign_in(
-    bridge: &mut Bridge,
-    slug: String,
-    connection: Arc<AgentConnection>,
-    reply: Reply,
-    attempts: u32,
-) {
+/// A prompt failed with `auth_required` (agents may check credentials only
+/// when they call their model): offer the same sign-in, then tell the user
+/// to send again.
+pub(crate) fn sign_in_after_prompt(bridge: &mut Bridge, thread_id: &str) {
+    let Some(slug) = bridge.threads.get(thread_id).map(|thread| thread.agent.clone()) else {
+        return;
+    };
+    let Some(connection) = bridge.agents.connection(&slug) else {
+        return;
+    };
+    let thread_id = thread_id.to_string();
+    let done: SignedIn = Box::new(move |bridge, result| {
+        // Terminal sign-in restarts the agent, which unloads the thread.
+        let loaded = bridge.threads.get(&thread_id).is_some_and(|thread| thread.loaded);
+        let (severity, title) = match result {
+            Ok(()) if loaded => ("info", "Signed in. Send your message again.".to_string()),
+            Ok(()) => (
+                "info",
+                "Signed in. Run /resume to reopen this session, then send your message again."
+                    .to_string(),
+            ),
+            Err(err) => ("warning", format!("Not signed in: {err}")),
+        };
+        bridge.notify(ServerNotification::AcpcNotice(AcpcNoticeNotification {
+            thread_id: Some(thread_id),
+            severity: severity.to_string(),
+            title,
+            description: None,
+        }));
+    });
+    sign_in(bridge, slug, connection, done);
+}
+
+/// Ask the user for a sign-in method and run it.
+fn sign_in(bridge: &mut Bridge, slug: String, connection: Arc<AgentConnection>, done: SignedIn) {
     let methods = auth_methods(&connection);
     let agent_name = bridge
         .agents
         .profile(&slug)
         .map_or_else(|| slug.clone(), |profile| profile.name.clone());
     if methods.is_empty() {
-        reply.error(
+        done(
             bridge,
-            format!("{agent_name} requires sign-in but offers no ACP sign-in method; sign in with its own tools"),
+            Err(format!(
+                "{agent_name} requires sign-in but offers no ACP sign-in method; sign in with its own tools"
+            )),
         );
         return;
     }
@@ -145,7 +184,7 @@ fn sign_in(
                 .and_then(|value| serde_json::from_value::<AcpcAuthSelectResponse>(value).ok())
                 .and_then(|response| response.method_id);
             let Some(method_id) = method_id else {
-                reply.error(bridge, "sign-in cancelled");
+                done(bridge, Err("sign-in cancelled".to_string()));
                 return;
             };
             let method = connection
@@ -158,16 +197,15 @@ fn sign_in(
                 Some(acp::AuthMethod::Agent(agent)) => {
                     bridge.spawn(async move {
                         let result = connection.authenticate(agent.id.clone()).await;
-                        move |bridge: &mut Bridge| match result {
-                            Ok(()) => probe(bridge, slug, reply, attempts + 1),
-                            Err(err) => reply.error(bridge, format!("sign-in failed: {}", err.message)),
+                        move |bridge: &mut Bridge| {
+                            done(bridge, result.map_err(|err| format!("sign-in failed: {}", err.message)));
                         }
                     });
                 }
                 Some(acp::AuthMethod::Terminal(terminal)) => {
-                    terminal_sign_in(bridge, slug, &terminal, reply, attempts);
+                    terminal_sign_in(bridge, slug, &terminal, done);
                 }
-                _ => reply.error(bridge, format!("unknown sign-in method `{method_id}`")),
+                _ => done(bridge, Err(format!("unknown sign-in method `{method_id}`"))),
             }
         }),
     );
@@ -183,19 +221,13 @@ fn auth_method_id(method: &acp::AuthMethod) -> Option<&str> {
 
 /// Terminal sign-in: the client runs the agent's command with the method's
 /// args and env interactively, then reconnects and re-initializes.
-fn terminal_sign_in(
-    bridge: &mut Bridge,
-    slug: String,
-    method: &acp::AuthMethodTerminal,
-    reply: Reply,
-    attempts: u32,
-) {
+fn terminal_sign_in(bridge: &mut Bridge, slug: String, method: &acp::AuthMethodTerminal, done: SignedIn) {
     if !bridge.options.client.terminal_auth {
-        reply.error(bridge, "terminal sign-in is not available in this client");
+        done(bridge, Err("terminal sign-in is not available in this client".to_string()));
         return;
     }
     let Some(profile) = bridge.agents.profile(&slug).cloned() else {
-        reply.error(bridge, format!("unknown agent `{slug}`"));
+        done(bridge, Err(format!("unknown agent `{slug}`")));
         return;
     };
     let auth = TerminalAuthCommand::new(&profile.command, method);
@@ -244,7 +276,7 @@ fn terminal_sign_in(
                 .and_then(|value| serde_json::from_value::<AcpcTerminalRunResponse>(value).ok())
                 .and_then(|response| response.exit_code);
             if exit_code != Some(0) {
-                reply.error(bridge, "sign-in did not complete");
+                done(bridge, Err("sign-in did not complete".to_string()));
                 return;
             }
             // The agent must be restarted and re-initialized after terminal
@@ -260,7 +292,7 @@ fn terminal_sign_in(
                 if let Some(old) = restarted {
                     old.shutdown().await;
                 }
-                move |bridge: &mut Bridge| probe(bridge, slug, reply, attempts + 1)
+                move |bridge: &mut Bridge| done(bridge, Ok(()))
             });
         }),
     );

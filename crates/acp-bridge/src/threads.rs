@@ -750,8 +750,9 @@ fn finish_turn(
             finish_turn_with(bridge, thread_id, TurnStatus::Interrupted, None);
         }
         Err(err) => {
-            let message = if err.is_auth_required() {
-                format!("The agent requires authentication: {}", err.message)
+            let auth_required = err.is_auth_required();
+            let message = if auth_required {
+                format!("The agent requires sign-in: {}", err.message)
             } else {
                 err.message
             };
@@ -770,6 +771,9 @@ fn finish_turn(
                 }));
             }
             finish_turn_with(bridge, thread_id, TurnStatus::Failed, Some(error));
+            if auth_required {
+                crate::select::sign_in_after_prompt(bridge, thread_id);
+            }
         }
     }
 }

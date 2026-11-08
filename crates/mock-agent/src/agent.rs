@@ -134,8 +134,16 @@ impl MockAgent {
     }
 
     pub(crate) fn require_auth(&self) -> Result<(), Error> {
+        self.check_auth(self.scenario.require_auth)
+    }
+
+    pub(crate) fn require_prompt_auth(&self) -> Result<(), Error> {
+        self.check_auth(self.scenario.require_auth || self.scenario.require_auth_for_prompts)
+    }
+
+    fn check_auth(&self, required: bool) -> Result<(), Error> {
         let authenticated = self.lock().authenticated || self.state.is_authenticated();
-        if self.scenario.require_auth && !authenticated {
+        if required && !authenticated {
             return Err(Error::auth_required());
         }
         Ok(())

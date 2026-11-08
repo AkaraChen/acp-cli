@@ -29,6 +29,9 @@ pub struct Scenario {
     pub auth_methods: Vec<AuthMethod>,
     /// Session setup and prompts fail with `auth_required` until authenticated.
     pub require_auth: bool,
+    /// Only prompts fail with `auth_required` until authenticated, as some
+    /// agents check credentials only when they call their model.
+    pub require_auth_for_prompts: bool,
     /// Persistent state directory; falls back to `$ACPC_MOCK_STATE`, then to
     /// in-memory state only.
     pub state_dir: Option<PathBuf>,
@@ -158,6 +161,7 @@ impl Default for Scenario {
             capabilities: Capabilities::default(),
             auth_methods: Vec::new(),
             require_auth: false,
+            require_auth_for_prompts: false,
             state_dir: None,
             config_options: demo_config_options(),
             modes: Some(demo_modes()),

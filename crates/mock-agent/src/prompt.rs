@@ -54,7 +54,7 @@ pub fn prompt(
 }
 
 fn start(agent: &MockAgent, request: &acp::PromptRequest) -> Result<TurnPlan, Error> {
-    agent.require_auth()?;
+    agent.require_prompt_auth()?;
     let text = prompt_text(&request.prompt);
     let turn_id = agent.unique_id("call");
     agent.with_active(&request.session_id, |client, session| {

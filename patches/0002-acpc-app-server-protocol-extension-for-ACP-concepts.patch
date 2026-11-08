@@ -22,13 +22,15 @@ and exec reject the new methods.
  .../tui/src/app/app_server_event_targets.rs   |  13 +
  codex-rs/tui/src/app/app_server_requests.rs   |  10 +
  codex-rs/tui/src/app/side.rs                  |   1 +
- codex-rs/tui/src/chatwidget.rs                |   2 +
+ codex-rs/tui/src/chatwidget.rs                |   4 +
  codex-rs/tui/src/chatwidget/acpc.rs           |  43 +++
- codex-rs/tui/src/chatwidget/constructor.rs    |   1 +
+ codex-rs/tui/src/chatwidget/constructor.rs    |   8 +-
  codex-rs/tui/src/chatwidget/protocol.rs       |   6 +
  .../tui/src/chatwidget/protocol_requests.rs   |   2 +
+ codex-rs/tui/src/history_cell/session.rs      |  10 +-
  codex-rs/tui/src/lib.rs                       |   1 +
- 16 files changed, 463 insertions(+), 1 deletion(-)
+ codex-rs/tui/src/startup_draft.rs             |   7 +-
+ 18 files changed, 486 insertions(+), 4 deletions(-)
  create mode 100644 codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
  create mode 100644 codex-rs/tui/src/acpc.rs
  create mode 100644 codex-rs/tui/src/chatwidget/acpc.rs
@@ -578,7 +580,7 @@ index 755d736..84266ab 100644
              ServerRequest::CommandExecutionRequestApproval { .. }
              | ServerRequest::FileChangeRequestApproval { .. }
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 31d1dc1..6bcc676 100644
+index 31d1dc1..397c48c 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -254,6 +254,7 @@ use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
@@ -597,6 +599,15 @@ index 31d1dc1..6bcc676 100644
      // Keep fixture storage alive until all other widget fields have been dropped.
      #[cfg(test)]
      pub(crate) test_codex_home: Option<tempfile::TempDir>,
+@@ -2139,6 +2141,8 @@ impl Drop for ChatWidget {
+ }
+ 
+ const PLACEHOLDER: &str = "Ask Codex to do anything";
++/// acpc: the composer talks to the configured ACP agent, not Codex.
++pub(crate) const ACPC_PLACEHOLDER: &str = "Ask the agent anything";
+ const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
+ 
+ // Extract the first bold (Markdown) element in the form **...** from `s`.
 diff --git a/codex-rs/tui/src/chatwidget/acpc.rs b/codex-rs/tui/src/chatwidget/acpc.rs
 new file mode 100644
 index 0000000..4952543
@@ -647,10 +658,24 @@ index 0000000..4952543
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index 9d1d4fa..d31d9ef 100644
+index 9d1d4fa..bcbe321 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
-@@ -306,6 +306,7 @@ impl ChatWidget {
+@@ -41,7 +41,12 @@ impl ChatWidget {
+         let mut config = config;
+         config.model = model.clone();
+         let prevent_idle_sleep = config.features.enabled(Feature::PreventIdleSleep);
+-        let placeholder = PLACEHOLDER.to_string();
++        let placeholder = if crate::acpc::enabled() {
++            ACPC_PLACEHOLDER
++        } else {
++            PLACEHOLDER
++        }
++        .to_string();
+         let side_placeholder = SIDE_PLACEHOLDER.to_string();
+ 
+         let model_override = model.as_deref();
+@@ -306,6 +311,7 @@ impl ChatWidget {
              last_rendered_user_message_display: None,
              last_rendered_user_message_client_id: None,
              last_non_retry_error: None,
@@ -688,6 +713,34 @@ index e76b50b..94d8dd1 100644
              ServerRequest::CommandExecutionRequestApproval { params, .. } => {
                  let fallback_cwd = self.config.cwd.clone();
                  self.on_exec_approval_request(
+diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
+index 120454d..14de835 100644
+--- a/codex-rs/tui/src/history_cell/session.rs
++++ b/codex-rs/tui/src/history_cell/session.rs
+@@ -42,6 +42,10 @@ pub(crate) fn with_border_with_inner_width(
+ 
+ /// Brand title shared by the session header and the status card; each owns its own indentation.
+ pub(crate) fn codex_title(version: &str) -> Vec<Span<'static>> {
++    // acpc: the Codex version says nothing about the agent behind acpc.
++    if crate::acpc::enabled() {
++        return vec![">_ ".fg(accent_color()), "acpc".bold()];
++    }
+     vec![
+         ">_ ".fg(accent_color()),
+         "OpenAI Codex".bold(),
+@@ -406,7 +410,11 @@ impl HistoryCell for SessionHeaderHistoryCell {
+ 
+     fn raw_lines(&self) -> Vec<Line<'static>> {
+         let mut lines = vec![
+-            Line::from(format!("OpenAI Codex (v{})", self.version)),
++            Line::from(if crate::acpc::enabled() {
++                "acpc".to_string()
++            } else {
++                format!("OpenAI Codex (v{})", self.version)
++            }),
+             Line::from(format!(
+                 "model: {}{}",
+                 self.model,
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
 index 115f083..5dd2826 100644
 --- a/codex-rs/tui/src/lib.rs
@@ -700,3 +753,21 @@ index 115f083..5dd2826 100644
  mod activation_key_guard;
  mod additional_dirs;
  mod analytics;
+diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
+index 09ea015..67e84fd 100644
+--- a/codex-rs/tui/src/startup_draft.rs
++++ b/codex-rs/tui/src/startup_draft.rs
+@@ -518,7 +518,12 @@ fn startup_draft_bottom_pane(
+             frame_requester,
+             has_input_focus: true,
+             enhanced_keys_supported,
+-            placeholder_text: "Ask Codex to do anything".to_string(),
++            placeholder_text: if crate::acpc::enabled() {
++                crate::chatwidget::ACPC_PLACEHOLDER
++            } else {
++                "Ask Codex to do anything"
++            }
++            .to_string(),
+             disable_paste_burst: false,
+             animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
+             effects: Default::default(),

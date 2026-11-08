@@ -616,3 +616,29 @@ async fn hang_up_lets_the_running_turn_finish_then_stops() {
     assert_eq!(completed["params"]["turn"]["status"], "completed");
     harness.wait_closed().await;
 }
+
+#[tokio::test]
+async fn prompt_that_needs_sign_in_offers_it_then_works() {
+    let mut harness = Harness::start(HarnessConfig {
+        scenario: Some(json!({
+            "require_auth_for_prompts": true,
+            "auth_methods": [{"id": "login", "name": "Log in"}]
+        })),
+        ..HarnessConfig::default()
+    })
+    .await;
+    let thread_id = harness.start_thread().await;
+    harness.send_turn(&thread_id, "hello").await;
+    let failed = harness.next("turn/completed").await;
+    assert_eq!(failed["params"]["turn"]["status"], "failed");
+    let auth = harness.next("acpc/auth/select").await;
+    assert_eq!(auth["params"]["methods"][0]["id"], "login");
+    harness.respond(auth["id"].clone(), json!({"methodId": "login"})).await;
+    let notice = harness.next("acpc/notice").await;
+    assert_eq!(notice["params"]["threadId"], thread_id.as_str());
+    assert_eq!(notice["params"]["title"], "Signed in. Send your message again.");
+
+    harness.send_turn(&thread_id, "hello").await;
+    let completed = harness.next("turn/completed").await;
+    assert_eq!(completed["params"]["turn"]["status"], "completed");
+}
