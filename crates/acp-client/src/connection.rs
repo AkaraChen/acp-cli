@@ -27,6 +27,9 @@ use crate::process::StderrTail;
 use crate::process::spawn_agent;
 use crate::process::terminate;
 
+/// How long an agent may take to answer `initialize` (npx may download it).
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Identifies an agent-initiated request awaiting a user decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PendingRequestId(pub u64);
@@ -178,6 +181,8 @@ pub struct AgentConnection {
     shared: Arc<Shared>,
     stderr: StderrTail,
     child: Mutex<Option<Child>>,
+    /// The agent's process group (it is spawned as a group leader).
+    pgid: Option<i32>,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
 }
 
@@ -295,9 +300,18 @@ impl AgentConnection {
         let request = acp::InitializeRequest::new(ProtocolVersion::V1)
             .client_capabilities(options.client_capabilities())
             .client_info(options.client_info());
-        let init = match cx.send_request(request).block_task().await {
-            Ok(init) => init,
-            Err(err) => {
+        let pgid = child.id().and_then(|pid| i32::try_from(pid).ok());
+        let answer = tokio::time::timeout(INITIALIZE_TIMEOUT, cx.send_request(request).block_task());
+        let init = match answer.await {
+            Err(_) => {
+                terminate(child, Duration::from_secs(2)).await;
+                return Err(ConnectError::Timeout {
+                    seconds: INITIALIZE_TIMEOUT.as_secs(),
+                    stderr: stderr.snapshot(),
+                });
+            }
+            Ok(Ok(init)) => init,
+            Ok(Err(err)) => {
                 let exited = agent_client_protocol::is_incoming_transport_closed(&err)
                     || agent_client_protocol::is_connection_terminated(&err);
                 terminate(child, Duration::from_secs(2)).await;
@@ -323,6 +337,7 @@ impl AgentConnection {
             shared,
             stderr,
             child: Mutex::new(Some(child)),
+            pgid,
             shutdown: Mutex::new(Some(shutdown_tx)),
         });
         Ok((connection, events_rx))
@@ -574,7 +589,36 @@ impl AgentConnection {
                 terminate(child, Duration::from_secs(2)).await;
             }
         }
+        // The leader may be gone while its children (npx, node, ...) linger.
+        signal_group(self.pgid, Signal::Term);
     }
+}
+
+impl Drop for AgentConnection {
+    fn drop(&mut self) {
+        signal_group(self.pgid, Signal::Kill);
+    }
+}
+
+enum Signal {
+    Term,
+    Kill,
+}
+
+fn signal_group(pgid: Option<i32>, signal: Signal) {
+    #[cfg(unix)]
+    if let Some(pgid) = pgid.filter(|pgid| *pgid > 0) {
+        let signal = match signal {
+            Signal::Term => libc::SIGTERM,
+            Signal::Kill => libc::SIGKILL,
+        };
+        // SAFETY: signalling the process group acpc created for the agent.
+        unsafe {
+            libc::kill(-pgid, signal);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (pgid, signal);
 }
 
 fn elicitation_session(request: &acp::CreateElicitationRequest) -> Option<acp::SessionId> {

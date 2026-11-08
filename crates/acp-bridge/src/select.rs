@@ -204,13 +204,24 @@ fn terminal_sign_in(
     for (name, value) in &auth.command.env {
         env.insert(name.clone(), Some(value.clone()));
     }
-    let mut title = format!("Sign in to {}: {}", profile.name, auth.method_name);
-    if !auth.sensitive_env.is_empty() {
-        // authentication.mdx: tell the user about risky overrides.
-        title.push_str(&format!(" (the agent sets {})", auth.sensitive_env.join(", ")));
-    }
+    let title = format!("Sign in to {}: {}", profile.name, auth.method_name);
+    // authentication.mdx: confirm risky environment overrides first.
+    let confirm = (!auth.sensitive_env.is_empty()).then(|| {
+        let overrides: Vec<String> = auth
+            .command
+            .env
+            .iter()
+            .filter(|(name, _)| auth.sensitive_env.contains(name))
+            .map(|(name, value)| format!("  {name}={value}"))
+            .collect();
+        format!(
+            "The agent asks to set these environment variables for its sign-in command:\n{}",
+            overrides.join("\n")
+        )
+    });
     let params = AcpcTerminalRunParams {
         title,
+        confirm,
         command: auth.command.command.clone(),
         args: auth.command.args.clone(),
         env,
@@ -234,6 +245,12 @@ fn terminal_sign_in(
             }
             // The agent must be restarted and re-initialized after terminal
             // sign-in (authentication.mdx).
+            // Its sessions end with the old process.
+            crate::threads::unload_agent_threads(
+                bridge,
+                &slug,
+                "The agent restarted to finish signing in; use /resume to reopen its sessions.",
+            );
             let restarted = bridge.agents.restart(&slug);
             bridge.spawn(async move {
                 if let Some(old) = restarted {

@@ -1,0 +1,508 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AkaraChen <akarachen@outlook.com>
+Date: Sun, 8 Nov 2026 10:03:58 +0100
+Subject: [PATCH] acpc: number and multi-select elicitation fields
+
+Elicitation forms with number, integer or multi-select fields used to
+fall back to a bare accept/decline prompt. Numbers are typed into the
+composer and checked against the schema bounds on submit; multi-select
+fields render as a checklist (space or a digit toggles, Enter moves on)
+with min/max item checks.
+---
+ .../src/bottom_pane/mcp_server_elicitation.rs | 191 +++++++++++++++++-
+ .../mcp_server_elicitation/extra_fields.rs    | 189 +++++++++++++++++
+ 2 files changed, 371 insertions(+), 9 deletions(-)
+ create mode 100644 codex-rs/tui/src/bottom_pane/mcp_server_elicitation/extra_fields.rs
+
+diff --git a/codex-rs/tui/src/bottom_pane/mcp_server_elicitation.rs b/codex-rs/tui/src/bottom_pane/mcp_server_elicitation.rs
+index 3239844..f1fa5fd 100644
+--- a/codex-rs/tui/src/bottom_pane/mcp_server_elicitation.rs
++++ b/codex-rs/tui/src/bottom_pane/mcp_server_elicitation.rs
+@@ -123,8 +123,23 @@ enum McpServerElicitationFieldInput {
+     Text {
+         secret: bool,
+     },
++    /// acpc: typed into the composer, validated on submit.
++    Number {
++        integer: bool,
++        minimum: Option<f64>,
++        maximum: Option<f64>,
++    },
++    /// acpc: a checklist rendered like a select.
++    MultiSelect {
++        options: Vec<McpServerElicitationOption>,
++        min_items: Option<u64>,
++        max_items: Option<u64>,
++        default_checked: Vec<usize>,
++    },
+ }
+ 
++mod extra_fields;
++
+ #[derive(Clone, Debug, PartialEq)]
+ struct McpServerElicitationField {
+     id: String,
+@@ -187,6 +202,8 @@ struct McpServerElicitationAnswerState {
+     selection: ScrollState,
+     draft: ComposerDraft,
+     answer_committed: bool,
++    /// Multi-select fields: which options are checked.
++    checked: Vec<bool>,
+ }
+ 
+ impl McpServerElicitationFormRequest {
+@@ -620,8 +637,12 @@ fn parse_field(
+         McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::SingleSelect(schema)) => {
+             parse_single_select_field(id, schema, required)
+         }
+-        McpElicitationPrimitiveSchema::Number(_)
+-        | McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::MultiSelect(_)) => None,
++        McpElicitationPrimitiveSchema::Number(schema) => {
++            Some(extra_fields::number_field(id, schema, required))
++        }
++        McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::MultiSelect(schema)) => {
++            Some(extra_fields::multi_select_field(id, schema, required))
++        }
+     }
+ }
+ 
+@@ -765,19 +786,33 @@ impl McpServerElicitationOverlay {
+             .iter()
+             .map(|field| {
+                 let mut selection = ScrollState::new();
++                let mut checked = Vec::new();
+                 let (draft, answer_committed) = match &field.input {
+                     McpServerElicitationFieldInput::Select { default_idx, .. } => {
+                         selection.selected_idx = default_idx.or(Some(0));
+                         (ComposerDraft::default(), default_idx.is_some())
+                     }
+-                    McpServerElicitationFieldInput::Text { .. } => {
++                    McpServerElicitationFieldInput::Text { .. }
++                    | McpServerElicitationFieldInput::Number { .. } => {
+                         (ComposerDraft::default(), false)
+                     }
++                    McpServerElicitationFieldInput::MultiSelect {
++                        options,
++                        default_checked,
++                        ..
++                    } => {
++                        selection.selected_idx = Some(0);
++                        checked = (0..options.len())
++                            .map(|idx| default_checked.contains(&idx))
++                            .collect();
++                        (ComposerDraft::default(), !default_checked.is_empty())
++                    }
+                 };
+                 McpServerElicitationAnswerState {
+                     selection,
+                     draft,
+                     answer_committed,
++                    checked,
+                 }
+             })
+             .collect();
+@@ -879,7 +914,17 @@ impl McpServerElicitationOverlay {
+     fn current_field_is_select(&self) -> bool {
+         matches!(
+             self.current_field().map(|field| &field.input),
+-            Some(McpServerElicitationFieldInput::Select { .. })
++            Some(
++                McpServerElicitationFieldInput::Select { .. }
++                    | McpServerElicitationFieldInput::MultiSelect { .. }
++            )
++        )
++    }
++
++    fn current_field_is_multi_select(&self) -> bool {
++        matches!(
++            self.current_field().map(|field| &field.input),
++            Some(McpServerElicitationFieldInput::MultiSelect { .. })
+         )
+     }
+ 
+@@ -901,7 +946,10 @@ impl McpServerElicitationOverlay {
+ 
+     fn current_options(&self) -> &[McpServerElicitationOption] {
+         match self.current_field().map(|field| &field.input) {
+-            Some(McpServerElicitationFieldInput::Select { options, .. }) => options.as_slice(),
++            Some(
++                McpServerElicitationFieldInput::Select { options, .. }
++                | McpServerElicitationFieldInput::MultiSelect { options, .. },
++            ) => options.as_slice(),
+             _ => &[],
+         }
+     }
+@@ -918,7 +966,15 @@ impl McpServerElicitationOverlay {
+                     ' '
+                 };
+                 let number = idx + 1;
+-                let prefix_label = format!("{prefix} {number}. ");
++                let checkbox = if self.current_field_is_multi_select() {
++                    let checked = self
++                        .current_answer()
++                        .is_some_and(|answer| answer.checked.get(idx).copied().unwrap_or(false));
++                    if checked { "[x] " } else { "[ ] " }
++                } else {
++                    ""
++                };
++                let prefix_label = format!("{prefix} {number}. {checkbox}");
+                 let wrap_indent = UnicodeWidthStr::width(prefix_label.as_str());
+                 GenericDisplayRow {
+                     selection_style: Some(crate::bottom_pane::selection_style()),
+@@ -1094,9 +1150,67 @@ impl McpServerElicitationOverlay {
+                 let text = text.trim();
+                 (!text.is_empty()).then(|| Value::String(text.to_string()))
+             }
++            McpServerElicitationFieldInput::Number {
++                integer,
++                minimum,
++                maximum,
++            } => {
++                if !answer.answer_committed {
++                    return None;
++                }
++                let text = answer.draft.text_with_pending();
++                extra_fields::parse_number(&text, *integer, *minimum, *maximum).ok()
++            }
++            McpServerElicitationFieldInput::MultiSelect { options, .. } => {
++                if !answer.answer_committed {
++                    return None;
++                }
++                Some(Value::Array(
++                    options
++                        .iter()
++                        .zip(&answer.checked)
++                        .filter(|(_, checked)| **checked)
++                        .map(|(option, _)| option.value.clone())
++                        .collect(),
++                ))
++            }
+         }
+     }
+ 
++    /// acpc: first invalid number or checklist answer, with the reason.
++    fn first_invalid_field(&self) -> Option<(usize, String)> {
++        self.request
++            .fields
++            .iter()
++            .zip(&self.answers)
++            .enumerate()
++            .find_map(|(idx, (field, answer))| {
++                let problem = match &field.input {
++                    McpServerElicitationFieldInput::Number {
++                        integer,
++                        minimum,
++                        maximum,
++                    } => {
++                        let text = answer.draft.text_with_pending();
++                        if text.trim().is_empty() {
++                            return None;
++                        }
++                        extra_fields::parse_number(&text, *integer, *minimum, *maximum).err()
++                    }
++                    McpServerElicitationFieldInput::MultiSelect {
++                        min_items,
++                        max_items,
++                        ..
++                    } if answer.answer_committed => {
++                        let count = answer.checked.iter().filter(|checked| **checked).count();
++                        extra_fields::check_item_count(count, *min_items, *max_items).err()
++                    }
++                    _ => None,
++                };
++                problem.map(|problem| (idx, format!("{}: {problem}", field.label)))
++            })
++    }
++
+     fn required_unanswered_count(&self) -> usize {
+         self.request
+             .fields
+@@ -1170,6 +1284,11 @@ impl McpServerElicitationOverlay {
+ 
+     fn submit_answers(&mut self) {
+         self.save_current_draft();
++        if let Some((idx, problem)) = self.first_invalid_field() {
++            self.validation_error = Some(problem);
++            self.jump_to_field(idx);
++            return;
++        }
+         if let Some(idx) = self.first_required_unanswered_index() {
+             self.validation_error = Some("Answer required fields before submitting.".to_string());
+             self.jump_to_field(idx);
+@@ -1605,6 +1724,52 @@ impl BottomPaneView for McpServerElicitationOverlay {
+             _ => {}
+         }
+ 
++        if self.current_field_is_multi_select() {
++            self.validation_error = None;
++            let options_len = self.options_len();
++            let toggle = |answer: &mut McpServerElicitationAnswerState, idx: usize| {
++                if let Some(checked) = answer.checked.get_mut(idx) {
++                    *checked = !*checked;
++                }
++                answer.answer_committed = true;
++            };
++            match (self.list_keymap.action_for(key_event), key_event.code) {
++                (Some(ListAction::MoveUp), _) | (_, KeyCode::Up | KeyCode::Char('k')) => {
++                    if let Some(answer) = self.current_answer_mut() {
++                        answer.selection.move_up_wrap(options_len);
++                    }
++                }
++                (Some(ListAction::MoveDown), _) | (_, KeyCode::Down | KeyCode::Char('j')) => {
++                    if let Some(answer) = self.current_answer_mut() {
++                        answer.selection.move_down_wrap(options_len);
++                    }
++                }
++                (_, KeyCode::Char(' ')) => {
++                    if let Some(answer) = self.current_answer_mut()
++                        && let Some(idx) = answer.selection.selected_idx
++                    {
++                        toggle(answer, idx);
++                    }
++                }
++                (Some(ListAction::Accept), _) | (_, KeyCode::Enter) => {
++                    if let Some(answer) = self.current_answer_mut() {
++                        answer.answer_committed = true;
++                    }
++                    self.go_next_or_submit();
++                }
++                (_, KeyCode::Char(ch)) => {
++                    if let Some(option_idx) = self.option_index_for_digit(ch)
++                        && let Some(answer) = self.current_answer_mut()
++                    {
++                        answer.selection.selected_idx = Some(option_idx);
++                        toggle(answer, option_idx);
++                    }
++                }
++                _ => {}
++            }
++            return;
++        }
++
+         if self.current_field_is_select() {
+             self.validation_error = None;
+             let options_len = self.options_len();
+@@ -1908,7 +2073,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn unsupported_numeric_form_falls_back() {
++    fn numeric_form_uses_a_number_field() {
+         let request = from_form_request(
+             ThreadId::default(),
+             form_request(
+@@ -1924,9 +2089,17 @@ mod tests {
+                 }),
+                 /*meta*/ None,
+             ),
+-        );
++        )
++        .expect("numeric forms are supported");
+ 
+-        assert_eq!(request, None);
++        assert_eq!(
++            request.fields[0].input,
++            McpServerElicitationFieldInput::Number {
++                integer: true,
++                minimum: None,
++                maximum: None,
++            }
++        );
+     }
+ 
+     #[test]
+diff --git a/codex-rs/tui/src/bottom_pane/mcp_server_elicitation/extra_fields.rs b/codex-rs/tui/src/bottom_pane/mcp_server_elicitation/extra_fields.rs
+new file mode 100644
+index 0000000..3c2a431
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/mcp_server_elicitation/extra_fields.rs
+@@ -0,0 +1,189 @@
++//! acpc: number and multi-select elicitation fields. ACP agents request
++//! these through `elicitation/create`; without them the whole form would
++//! fall back to a bare accept/decline prompt.
++
++use codex_app_server_protocol::McpElicitationMultiSelectEnumSchema;
++use codex_app_server_protocol::McpElicitationNumberSchema;
++use codex_app_server_protocol::McpElicitationNumberType;
++use serde_json::Value;
++
++use super::McpServerElicitationField;
++use super::McpServerElicitationFieldInput;
++use super::McpServerElicitationOption;
++
++pub(super) fn number_field(
++    id: &str,
++    schema: McpElicitationNumberSchema,
++    required: bool,
++) -> McpServerElicitationField {
++    let label = schema.title.unwrap_or_else(|| id.to_string());
++    let prompt = schema.description.unwrap_or_else(|| label.clone());
++    McpServerElicitationField {
++        id: id.to_string(),
++        label,
++        prompt,
++        required,
++        input: McpServerElicitationFieldInput::Number {
++            integer: schema.type_ == McpElicitationNumberType::Integer,
++            minimum: schema.minimum,
++            maximum: schema.maximum,
++        },
++    }
++}
++
++pub(super) fn multi_select_field(
++    id: &str,
++    schema: McpElicitationMultiSelectEnumSchema,
++    required: bool,
++) -> McpServerElicitationField {
++    let (title, description, min_items, max_items, default, options) = match schema {
++        McpElicitationMultiSelectEnumSchema::Untitled(schema) => (
++            schema.title,
++            schema.description,
++            schema.min_items,
++            schema.max_items,
++            schema.default,
++            schema
++                .items
++                .enum_
++                .into_iter()
++                .map(|value| McpServerElicitationOption {
++                    label: value.clone(),
++                    description: None,
++                    value: Value::String(value),
++                })
++                .collect::<Vec<_>>(),
++        ),
++        McpElicitationMultiSelectEnumSchema::Titled(schema) => (
++            schema.title,
++            schema.description,
++            schema.min_items,
++            schema.max_items,
++            schema.default,
++            schema
++                .items
++                .any_of
++                .into_iter()
++                .map(|option| McpServerElicitationOption {
++                    label: option.title,
++                    description: None,
++                    value: Value::String(option.const_),
++                })
++                .collect::<Vec<_>>(),
++        ),
++    };
++    let label = title.unwrap_or_else(|| id.to_string());
++    let prompt = description.unwrap_or_else(|| label.clone());
++    let default_checked = default
++        .unwrap_or_default()
++        .into_iter()
++        .filter_map(|value| {
++            options
++                .iter()
++                .position(|option| option.value == Value::String(value.clone()))
++        })
++        .collect();
++    McpServerElicitationField {
++        id: id.to_string(),
++        label,
++        prompt,
++        required,
++        input: McpServerElicitationFieldInput::MultiSelect {
++            options,
++            min_items,
++            max_items,
++            default_checked,
++        },
++    }
++}
++
++/// Parse a typed number, or explain what is wrong with it.
++pub(super) fn parse_number(
++    text: &str,
++    integer: bool,
++    minimum: Option<f64>,
++    maximum: Option<f64>,
++) -> Result<Value, String> {
++    let text = text.trim();
++    let value = if integer {
++        let number = text
++            .parse::<i64>()
++            .map_err(|_| "Enter a whole number.".to_string())?;
++        // Bounds are compared as f64, like the schema states them.
++        #[allow(clippy::cast_precision_loss)]
++        let as_float = number as f64;
++        check_bounds(as_float, minimum, maximum)?;
++        Value::from(number)
++    } else {
++        let number = text
++            .parse::<f64>()
++            .ok()
++            .filter(|number| number.is_finite())
++            .ok_or_else(|| "Enter a number.".to_string())?;
++        check_bounds(number, minimum, maximum)?;
++        Value::from(number)
++    };
++    Ok(value)
++}
++
++fn check_bounds(value: f64, minimum: Option<f64>, maximum: Option<f64>) -> Result<(), String> {
++    match (minimum, maximum) {
++        (Some(min), Some(max)) if value < min || value > max => {
++            Err(format!("Enter a number from {min} to {max}."))
++        }
++        (Some(min), _) if value < min => Err(format!("Enter a number of at least {min}.")),
++        (_, Some(max)) if value > max => Err(format!("Enter a number of at most {max}.")),
++        _ => Ok(()),
++    }
++}
++
++/// Check a multi-select answer's size against the schema.
++pub(super) fn check_item_count(
++    count: usize,
++    min_items: Option<u64>,
++    max_items: Option<u64>,
++) -> Result<(), String> {
++    let count = u64::try_from(count).unwrap_or(u64::MAX);
++    if let Some(min) = min_items
++        && count < min
++    {
++        return Err(format!("Choose at least {min}."));
++    }
++    if let Some(max) = max_items
++        && count > max
++    {
++        return Err(format!("Choose at most {max}."));
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use pretty_assertions::assert_eq;
++
++    #[test]
++    fn numbers_are_parsed_and_bounded() {
++        assert_eq!(parse_number(" 42 ", true, None, None), Ok(Value::from(42)));
++        assert_eq!(
++            parse_number("4.5", true, None, None),
++            Err("Enter a whole number.".to_string())
++        );
++        assert_eq!(parse_number("4.5", false, Some(1.0), Some(5.0)), Ok(Value::from(4.5)));
++        assert_eq!(
++            parse_number("9", false, Some(1.0), Some(5.0)),
++            Err("Enter a number from 1 to 5.".to_string())
++        );
++        assert_eq!(
++            parse_number("abc", false, None, None),
++            Err("Enter a number.".to_string())
++        );
++    }
++
++    #[test]
++    fn item_counts_are_bounded() {
++        assert_eq!(check_item_count(1, Some(1), Some(2)), Ok(()));
++        assert_eq!(check_item_count(0, Some(1), None), Err("Choose at least 1.".to_string()));
++        assert_eq!(check_item_count(3, None, Some(2)), Err("Choose at most 2.".to_string()));
++    }
++}

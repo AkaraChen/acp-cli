@@ -107,7 +107,11 @@ pub(crate) fn thread(state: &ThreadState, include_turns: bool) -> Thread {
         created_at: state.created_at,
         updated_at: state.updated_at,
         recency_at: Some(state.updated_at),
-        status: if state.session_id.is_some() {
+        status: if state.active.is_some() {
+            ThreadStatus::Active {
+                active_flags: Vec::new(),
+            }
+        } else if state.loaded {
             ThreadStatus::Idle
         } else {
             ThreadStatus::NotLoaded
@@ -125,7 +129,13 @@ pub(crate) fn thread(state: &ThreadState, include_turns: bool) -> Thread {
         name: state.title.clone(),
         daybreak_enabled: None,
         turns: if include_turns {
-            state.turns.clone()
+            // A running turn is included as it stands, so a client that
+            // attaches mid-turn sees it in progress.
+            let mut turns = state.turns.clone();
+            if let Some(active) = &state.active {
+                turns.push(active.builder.snapshot());
+            }
+            turns
         } else {
             Vec::new()
         },

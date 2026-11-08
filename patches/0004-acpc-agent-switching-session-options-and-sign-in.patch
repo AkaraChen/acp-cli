@@ -12,7 +12,7 @@ terminal (acpc/terminal/run) while it is pending.
 ---
  codex-rs/tui/src/acpc.rs                      |  53 ++++
  codex-rs/tui/src/app.rs                       |   1 +
- codex-rs/tui/src/app/acpc.rs                  | 185 ++++++++++++
+ codex-rs/tui/src/app/acpc.rs                  | 199 +++++++++++++
  codex-rs/tui/src/app/app_server_events.rs     |   3 +
  codex-rs/tui/src/app/event_dispatch.rs        |   3 +
  codex-rs/tui/src/app_event.rs                 |   2 +
@@ -20,7 +20,7 @@ terminal (acpc/terminal/run) while it is pending.
  codex-rs/tui/src/chatwidget/interaction.rs    |   8 +
  codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
  codex-rs/tui/src/slash_command.rs             |   9 +
- 10 files changed, 538 insertions(+), 1 deletion(-)
+ 10 files changed, 552 insertions(+), 1 deletion(-)
  create mode 100644 codex-rs/tui/src/app/acpc.rs
 
 diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
@@ -105,10 +105,10 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..5583d1f
+index 0000000..e3598fd
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,199 @@
 +//! acpc: app-level handling of ACP agent switching, session options and
 +//! sign-in (see `crate::acpc`).
 +
@@ -266,6 +266,20 @@ index 0000000..5583d1f
 +        // Nothing is drawn during the handoff; tell the user what runs.
 +        println!("\n{}", params.title);
 +        println!("$ {} {}\n", params.command, params.args.join(" "));
++        if let Some(question) = &params.confirm {
++            println!("{question}");
++            print!("Continue? [y/N] ");
++            std::io::Write::flush(&mut std::io::stdout())?;
++            let answer = tokio::task::spawn_blocking(|| {
++                let mut line = String::new();
++                std::io::stdin().read_line(&mut line).map(|_| line)
++            })
++            .await
++            .map_err(std::io::Error::other)??;
++            if !matches!(answer.trim(), "y" | "Y" | "yes") {
++                return Ok(None);
++            }
++        }
 +        let mut command = tokio::process::Command::new(&params.command);
 +        command.args(&params.args);
 +        for (name, value) in &params.env {

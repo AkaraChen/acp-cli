@@ -194,5 +194,14 @@ pub(crate) fn thread_state(bridge: &Bridge, thread: &ThreadState) {
     let mut emit = Vec::new();
     session_config_updated(thread, &mut emit);
     commands_updated(thread, &mut emit);
+    if let Some((used, size)) = thread.usage {
+        let turn_id = thread
+            .active
+            .as_ref()
+            .map(|active| active.builder.id.clone())
+            .or_else(|| thread.turns.last().map(|turn| turn.id.clone()))
+            .unwrap_or_default();
+        emit.push(crate::threads::usage_updated(&thread.id, &turn_id, used, size));
+    }
     crate::threads::emit_all(bridge, emit);
 }

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# End-to-end smoke test: drive the real TUI (in tmux) against the mock ACP
+# agent. Needs `just build` (target/debug/acpc and acpc-mock-agent) and tmux.
+#
+# Checks: startup, a streamed answer, a tool call, /options, /agent switching
+# (new session on another agent), and a clean exit with a resume hint.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bin="${CARGO_TARGET_DIR:-$root/target}/debug"
+for exe in acpc acpc-mock-agent; do
+  [[ -x "$bin/$exe" ]] || { echo "smoke-tui: $bin/$exe missing; run just build" >&2; exit 2; }
+done
+
+tmp="$(mktemp -d)"
+session="acpc-smoke-$$"
+cleanup() {
+  tmux kill-session -t "$session" 2>/dev/null || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp/home" "$tmp/state-a" "$tmp/state-b"
+cat > "$tmp/config.toml" <<EOF
+agent = "mock-a"
+
+[[agents]]
+slug = "mock-a"
+name = "Mock A"
+command = "$bin/acpc-mock-agent"
+env = { ACPC_MOCK_STATE = "$tmp/state-a" }
+
+[[agents]]
+slug = "mock-b"
+name = "Mock B"
+command = "$bin/acpc-mock-agent"
+env = { ACPC_MOCK_STATE = "$tmp/state-b" }
+EOF
+
+tmux new-session -d -s "$session" -x 120 -y 40 -c "$tmp" \
+  "env ACPC_HOME='$tmp/home' ACPC_CONFIG='$tmp/config.toml' '$bin/acpc'; echo \"EXIT:\$?\" > '$tmp/exit'; sleep 30"
+
+screen() { tmux capture-pane -p -t "$session" -S -200; }
+
+fail() {
+  echo "smoke-tui: FAIL: $*" >&2
+  echo "----- screen -----" >&2
+  screen >&2 || true
+  echo "----- acpc.log (tail) -----" >&2
+  tail -n 40 "$tmp/home/log/acpc.log" >&2 2>/dev/null || true
+  exit 1
+}
+
+wait_for() {
+  local pattern="$1" timeout="${2:-20}" waited=0
+  until screen | grep -qF -- "$pattern"; do
+    sleep 0.25
+    waited=$((waited + 1))
+    (( waited > timeout * 4 )) && fail "timed out waiting for: $pattern"
+  done
+  return 0
+}
+
+# Type like a person: the composer treats bursts of keys as a paste.
+type_text() {
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    tmux send-keys -t "$session" -l -- "${text:i:1}"
+    sleep 0.02
+  done
+}
+
+submit() {
+  type_text "$1"
+  sleep 0.3
+  tmux send-keys -t "$session" Enter
+}
+
+step() { echo "smoke-tui: $*"; }
+
+step "startup"
+wait_for "›" 30
+
+step "streamed answer"
+submit "hello there"
+wait_for "You said: hello there"
+
+step "tool call"
+submit "run a tool"
+wait_for "ls -la"
+
+step "/options"
+submit "/options"
+wait_for "Session options"
+tmux send-keys -t "$session" Escape
+sleep 0.5
+
+step "/agent switch"
+submit "/agent"
+wait_for "Switch agent"
+tmux send-keys -t "$session" Down
+sleep 0.2
+tmux send-keys -t "$session" Enter
+sleep 2
+submit "hello from b"
+wait_for "You said: hello from b"
+# The prompt must have gone to the second agent.
+compgen -G "$tmp/state-b/sessions/*" >/dev/null || fail "mock-b received no session"
+
+step "quit"
+submit "/quit"
+for _ in $(seq 1 40); do
+  [[ -f "$tmp/exit" ]] && break
+  sleep 0.25
+done
+[[ -f "$tmp/exit" ]] || fail "acpc did not exit"
+grep -q "EXIT:0" "$tmp/exit" || fail "acpc exited with $(cat "$tmp/exit")"
+screen | grep -qF "acpc resume" || fail "no resume hint"
+echo "smoke-tui: OK"

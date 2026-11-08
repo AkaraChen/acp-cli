@@ -5,6 +5,7 @@
 mod auth;
 mod config;
 mod home;
+mod prompt;
 
 use std::io::IsTerminal;
 use std::io::Write;
@@ -170,8 +171,8 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
     }
 
     let login_only = matches!(cli.command, Some(Command::Login));
-    // Resuming must not create a throwaway session on the agent.
-    let prepare_session = !matches!(cli.command, Some(Command::Resume { .. }));
+    // Resuming and signing in must not create a throwaway session on the agent.
+    let prepare_session = !matches!(cli.command, Some(Command::Resume { .. } | Command::Login));
     let initial = connect_initial_agent(&options, &agent, login_only, prepare_session).await?;
     if login_only {
         initial.connection.shutdown().await;
@@ -189,6 +190,8 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
 
     let mut tui_cli = codex_tui::Cli::try_parse_from(["acpc"])?;
     tui_cli.prompt = cli.prompt.clone();
+    // Sent with thread/start and used as the resume picker's cwd filter.
+    tui_cli.cwd = Some(cwd.clone());
     if let Some(Command::Resume { session_id, last }) = &cli.command {
         match session_id {
             Some(id) => tui_cli.resume_session_id = Some(id.clone()),

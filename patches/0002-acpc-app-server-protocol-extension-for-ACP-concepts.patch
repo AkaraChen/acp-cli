@@ -13,12 +13,12 @@ mirrors the extension state on the chat widget. Codex's own app-server
 and exec reject the new methods.
 ---
  .../src/protocol/common.rs                    |  51 ++++
- .../src/protocol/v2/acpc.rs                   | 260 ++++++++++++++++++
+ .../src/protocol/v2/acpc.rs                   | 263 ++++++++++++++++++
  .../src/protocol/v2/mod.rs                    |   2 +
  codex-rs/app-server/src/message_processor.rs  |   7 +
  codex-rs/app-server/src/notification_media.rs |   6 +-
  codex-rs/exec/src/lib.rs                      |  10 +
- codex-rs/tui/src/acpc.rs                      |  46 ++++
+ codex-rs/tui/src/acpc.rs                      |  46 +++
  .../tui/src/app/app_server_event_targets.rs   |  13 +
  codex-rs/tui/src/app/app_server_requests.rs   |  10 +
  codex-rs/tui/src/app/side.rs                  |   1 +
@@ -28,7 +28,7 @@ and exec reject the new methods.
  codex-rs/tui/src/chatwidget/protocol.rs       |   6 +
  .../tui/src/chatwidget/protocol_requests.rs   |   2 +
  codex-rs/tui/src/lib.rs                       |   1 +
- 16 files changed, 460 insertions(+), 1 deletion(-)
+ 16 files changed, 463 insertions(+), 1 deletion(-)
  create mode 100644 codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
  create mode 100644 codex-rs/tui/src/acpc.rs
  create mode 100644 codex-rs/tui/src/chatwidget/acpc.rs
@@ -111,10 +111,10 @@ index d61e1b3..6ee1b54 100644
      #[strum(serialize = "account/login/completed")]
 diff --git a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
 new file mode 100644
-index 0000000..26557d2
+index 0000000..8ad7c58
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,263 @@
 +//! acpc extensions: ACP (Agent Client Protocol) concepts that the Codex
 +//! app-server protocol has no message for. Sent by the acpc bridge; a
 +//! Codex app-server never emits them.
@@ -361,6 +361,9 @@ index 0000000..26557d2
 +pub struct AcpcTerminalRunParams {
 +    /// Shown before the command runs.
 +    pub title: String,
++    /// When set, shown with a y/N question; the command runs only on "y".
++    #[serde(default)]
++    pub confirm: Option<String>,
 +    pub command: String,
 +    pub args: Vec<String>,
 +    /// Set on the child; `None` values are removed from its environment.

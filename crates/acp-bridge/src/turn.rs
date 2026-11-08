@@ -331,7 +331,23 @@ impl TurnBuilder {
         let kind = entry.kind;
         let finished = tool_calls::outcome(&entry.call) != Outcome::Running;
         match kind {
-            ItemKind::Command => self.emit_output(&key, emit),
+            ItemKind::Command | ItemKind::Read | ItemKind::Dynamic => {
+                // Keep the stored item current (an approval prompt shows it).
+                let entry = &self.tools[&key];
+                let index = entry.index;
+                let item_id = item_id(&self.items[index].payload).to_string();
+                self.items[index].payload = tool_calls::payload(
+                    &item_id,
+                    kind,
+                    &entry.call,
+                    Outcome::Running,
+                    &self.cwd,
+                    None,
+                );
+                if kind == ItemKind::Command {
+                    self.emit_output(&key, emit);
+                }
+            }
             ItemKind::FileChange => {
                 let entry = &self.tools[&key];
                 let item_id = item_id(&self.items[entry.index].payload).to_string();
@@ -358,7 +374,6 @@ impl TurnBuilder {
                 }
                 self.items[index].payload = payload;
             }
-            ItemKind::Read | ItemKind::Dynamic => {}
         }
         if finished {
             self.finish_tool(&key, None, emit);
@@ -483,6 +498,21 @@ impl TurnBuilder {
         if finished {
             self.completed(index, emit);
         }
+    }
+
+    /// The turn so far, for a client attaching while it runs.
+    pub(crate) fn snapshot(&self) -> Turn {
+        let mut items = self.items.clone();
+        if let Some(open) = &self.open_text {
+            match &mut items[open.index].payload {
+                ThreadItemPayload::AgentMessage { text, .. } => text.clone_from(&open.text),
+                ThreadItemPayload::Reasoning { summary, .. } => {
+                    *summary = vec![open.text.clone()];
+                }
+                _ => {}
+            }
+        }
+        records::turn(&self.id, items, TurnStatus::InProgress, None, Some(self.started_at_ms), None)
     }
 
     /// Close every open item and produce the finished turn.

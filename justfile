@@ -18,8 +18,13 @@ build *args:
 check *args:
     cd {{codex_rs}} && cargo check -p acp-client -p acp-bridge -p acpc -p acpc-mock-agent {{args}}
 
+# Bridge integration tests drive the mock agent binary, so build it first.
 test *args:
-    cd {{codex_rs}} && cargo test -p acp-client -p acp-bridge -p acpc -p acpc-mock-agent {{args}}
+    cd {{codex_rs}} && cargo build -p acpc-mock-agent && cargo test -p acp-client -p acp-bridge -p acpc -p acpc-mock-agent {{args}}
+
+# Drive the real TUI in tmux against the mock agent.
+smoke: build
+    {{root}}/scripts/smoke-tui
 
 clippy *args:
     cd {{codex_rs}} && cargo clippy -p acp-client -p acp-bridge -p acpc -p acpc-mock-agent --all-targets {{args}}

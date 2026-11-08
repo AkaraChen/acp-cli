@@ -243,6 +243,23 @@ async fn list_and_resume_rebuild_history() {
         .find(|thread| thread["name"] == "Earlier work")
         .expect("listed session");
     let thread_id = old["id"].as_str().expect("id").to_string();
+    for (cwd, listed) in [
+        (json!("/"), true),
+        (json!("/elsewhere"), false),
+        (json!(["/elsewhere", "/"]), true),
+        (json!(["/elsewhere", "/other"]), false),
+    ] {
+        let list = harness
+            .request("thread/list", json!({"cwd": cwd}))
+            .await
+            .expect("thread/list");
+        let found = list["data"]
+            .as_array()
+            .expect("data")
+            .iter()
+            .any(|thread| thread["id"] == thread_id.as_str());
+        assert_eq!(found, listed, "cwd filter {cwd}");
+    }
 
     let resumed = harness
         .request("thread/resume", json!({"threadId": thread_id}))
@@ -329,4 +346,87 @@ async fn unsupported_requests_are_method_not_found() {
         .await
         .expect_err("fork is unsupported");
     assert_eq!(error["code"], -32601);
+}
+
+fn locked_scenario() -> Value {
+    json!({
+        "require_auth": true,
+        "auth_methods": [{"id": "login", "name": "Log in"}]
+    })
+}
+
+fn two_agents() -> HarnessConfig {
+    HarnessConfig {
+        agents: vec![
+            ("mock".to_string(), "Mock".to_string()),
+            ("locked".to_string(), "Locked".to_string()),
+        ],
+        agent_scenarios: vec![("locked".to_string(), locked_scenario())],
+        ..HarnessConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn agent_select_signs_in_then_new_threads_use_the_agent() {
+    let mut harness = Harness::start(two_agents()).await;
+    let list = harness.request("acpc/agent/list", json!({})).await.expect("list");
+    assert_eq!(list["current"], "mock");
+    assert_eq!(list["agents"].as_array().map(Vec::len), Some(2));
+
+    let select = harness
+        .send_request("acpc/agent/select", json!({"slug": "locked"}))
+        .await;
+    let auth = harness.next("acpc/auth/select").await;
+    assert_eq!(auth["params"]["agentName"], "Locked");
+    assert_eq!(auth["params"]["methods"][0]["id"], "login");
+    harness.respond(auth["id"].clone(), json!({"methodId": "login"})).await;
+    harness.response(select).await.expect("agent/select");
+    // Earlier updates (sent after initialize) still name the old agent.
+    loop {
+        let updated = harness.next("acpc/agents/updated").await;
+        if updated["params"]["current"] == "locked" {
+            break;
+        }
+    }
+
+    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    assert_eq!(started["thread"]["modelProvider"], "locked");
+    let thread_id = started["thread"]["id"].as_str().expect("id").to_string();
+    harness.send_turn(&thread_id, "hello").await;
+    let completed = harness.next("turn/completed").await;
+    assert_eq!(completed["params"]["turn"]["status"], "completed");
+}
+
+#[tokio::test]
+async fn cancelled_sign_in_keeps_the_current_agent() {
+    let mut harness = Harness::start(two_agents()).await;
+    let select = harness
+        .send_request("acpc/agent/select", json!({"slug": "locked"}))
+        .await;
+    let auth = harness.next("acpc/auth/select").await;
+    harness.respond(auth["id"].clone(), json!({"methodId": null})).await;
+    let error = harness.response(select).await.expect_err("sign-in was cancelled");
+    assert!(error["message"].as_str().is_some_and(|m| m.contains("cancelled")), "{error}");
+    let list = harness.request("acpc/agent/list", json!({})).await.expect("list");
+    assert_eq!(list["current"], "mock");
+}
+
+#[tokio::test]
+async fn session_options_and_commands_reach_the_client() {
+    let mut harness = Harness::start(HarnessConfig::default()).await;
+    let thread_id = harness.start_thread().await;
+    let config = harness.next("acpc/sessionConfig/updated").await;
+    assert_eq!(config["params"]["threadId"], thread_id.as_str());
+    // The first update (right after thread/start) may predate the agent's
+    // available_commands_update.
+    loop {
+        let commands = harness.next("acpc/availableCommands/updated").await;
+        assert_eq!(commands["params"]["threadId"], thread_id.as_str());
+        if commands["params"]["commands"]
+            .as_array()
+            .is_some_and(|commands| !commands.is_empty())
+        {
+            break;
+        }
+    }
 }

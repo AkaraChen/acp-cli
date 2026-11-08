@@ -381,6 +381,23 @@ impl Bridge {
         id
     }
 
+    /// Send `thread_id`'s unanswered server requests to one client again
+    /// (it dropped them while it was showing another thread).
+    pub(crate) fn resend_server_requests(&self, conn: ConnectionId, thread_id: &str) {
+        let mut pending: Vec<&PendingServerRequest> = self
+            .server_requests
+            .values()
+            .filter(|pending| pending.thread_id.as_deref() == Some(thread_id))
+            .collect();
+        pending.sort_by_key(|pending| match pending.request.id() {
+            RequestId::Integer(id) => *id,
+            RequestId::String(_) => i64::MAX,
+        });
+        for pending in pending {
+            self.send(conn, OutgoingMessage::Request(pending.request.clone()));
+        }
+    }
+
     /// Withdraw a server request nobody needs to answer anymore.
     pub(crate) fn resolve_server_request(&mut self, id: &RequestId) {
         if let Some(pending) = self.server_requests.remove(id)

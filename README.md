@@ -69,7 +69,12 @@ Inside the TUI:
 If the agent answers `auth_required`, acpc runs one of the agent's advertised
 ACP auth methods before the TUI starts: `agent` methods call `authenticate`;
 `terminal` methods run the agent's own command with the method's arguments in
-your terminal. acpc never handles credentials itself.
+your terminal. Forms the agent asks for while signing in are answered on the
+terminal, too. Switching with `/agent` to an agent that needs sign-in shows
+the same choice inside the TUI. When a terminal method sets environment
+variables that change how programs run (`PATH`, `LD_*`, `NODE_OPTIONS`,
+proxies, …), acpc shows them and asks first. acpc never handles credentials
+itself; `acpc login` signs in without opening a session.
 
 ## Scope
 
@@ -77,6 +82,13 @@ acpc implements the client side of ACP v1 and nothing beyond it: no local
 transcripts, no sandbox, no shell execution, no telemetry. It does not
 advertise the optional `fs/*` and `terminal/*` client capabilities, so agents
 use their own file system and shell.
+
+### Limitations
+
+- `acpc app-server` stops when stdin closes; requests still in flight are
+  dropped.
+- A session opened before its agent restarted (crash or terminal sign-in)
+  must be reopened with `/resume`.
 
 ## Build
 
@@ -86,15 +98,35 @@ the system libraries Codex needs (OpenSSL, a C compiler).
 ```sh
 scripts/sync-upstream            # fetch Codex at UPSTREAM, apply patches/
 just build                       # target/debug/acpc
-just test
+just test                        # unit, bridge integration and contract tests
+just smoke                       # drive the real TUI in tmux against the mock agent
 ```
 
 The first build compiles the Codex workspace and takes a while.
 
+Tests:
+
+- `acp-bridge` integration tests run the bridge in-process against
+  `acpc-mock-agent` (a scriptable ACP agent). Every message the bridge emits
+  is also decoded with the Codex protocol types the TUI uses, so protocol
+  drift fails a test instead of being silently dropped by the TUI.
+- `scripts/smoke-tui` starts `acpc` in tmux with two mock agents and checks a
+  conversation, a tool call, `/options`, `/agent` and exit.
+
 ## Upstream and patches
 
 - `UPSTREAM` — the openai/codex commit acpc builds against.
-- `patches/*.patch` — the acpc patch series (`git format-patch` files).
+- `patches/*.patch` — the acpc patch series (`git format-patch` files):
+  1. add acpc's crates to the Codex workspace;
+  2. `acpc/*` protocol extension (agent commands, session options and modes,
+     notices, agent list, agent selection, sign-in, terminal handoff) and an
+     acpc mode switch in the TUI, off unless acpc enables it;
+  3. agent slash commands in the composer; Codex-only built-ins hidden;
+  4. `/agent`, `/options`, Shift+Tab mode cycling, sign-in picker and
+     terminal handoff;
+  5. approval prompts that show the agent's own permission options;
+  6. number and multi-select fields in elicitation forms;
+  7. regenerated protocol schema fixtures (drop and regenerate on bumps).
 - `third_party/codex/` — generated checkout; never edit without exporting.
 
 To change upstream code: edit in `third_party/codex`, commit there, then

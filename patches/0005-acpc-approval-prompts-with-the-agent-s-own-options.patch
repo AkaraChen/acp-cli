@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AkaraChen <akarachen@outlook.com>
+Date: Sun, 8 Nov 2026 10:03:58 +0100
+Subject: [PATCH] acpc: approval prompts with the agent's own options
+
+CommandExecutionApprovalDecision gains AcpcOption, an ACP agent's own
+permission option. The approval overlay lists such options with the
+agent's labels and gives each kind's usual shortcut to the first option
+of that kind. In acpc mode the 'tell Codex' choice reads 'tell the
+agent'. Codex's own app-server never offers AcpcOption.
+---
+ codex-rs/analytics/src/reducer.rs             |  7 +++
+ .../src/protocol/v2/acpc.rs                   |  2 +-
+ .../src/protocol/v2/item.rs                   |  2 +
+ .../app-server/src/bespoke_event_handling.rs  |  5 ++
+ .../tui/src/bottom_pane/approval_overlay.rs   | 46 ++++++++++++++++++-
+ 5 files changed, 59 insertions(+), 3 deletions(-)
+
+diff --git a/codex-rs/analytics/src/reducer.rs b/codex-rs/analytics/src/reducer.rs
+index e9a59ca..4e5f134 100644
+--- a/codex-rs/analytics/src/reducer.rs
++++ b/codex-rs/analytics/src/reducer.rs
+@@ -3549,6 +3549,13 @@ fn command_execution_review_result(
+         },
+         CommandExecutionApprovalDecision::Decline => (ReviewStatus::Denied, ReviewResolution::None),
+         CommandExecutionApprovalDecision::Cancel => (ReviewStatus::Aborted, ReviewResolution::None),
++        CommandExecutionApprovalDecision::AcpcOption { option } => {
++            if option.kind.starts_with("allow") {
++                (ReviewStatus::Approved, ReviewResolution::None)
++            } else {
++                (ReviewStatus::Denied, ReviewResolution::None)
++            }
++        }
+     }
+ }
+ 
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
+index 8ad7c58..912b373 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
+@@ -198,7 +198,7 @@ pub struct AcpcModeSetParams {
+ pub struct AcpcModeSetResponse {}
+ 
+ /// An agent-provided permission option (ACP `PermissionOption`).
+-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+ #[serde(rename_all = "camelCase")]
+ #[ts(export_to = "v2/")]
+ pub struct AcpcPermissionOption {
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/item.rs b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+index c4cdf60..20d9691 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/item.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+@@ -86,6 +86,8 @@ pub enum CommandExecutionApprovalDecision {
+     Decline,
+     /// User denied the command. The turn will also be immediately interrupted.
+     Cancel,
++    /// acpc: one of an ACP agent's own permission options (v2/acpc.rs).
++    AcpcOption { option: super::AcpcPermissionOption },
+ }
+ 
+ impl From<CoreReviewDecision> for CommandExecutionApprovalDecision {
+diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
+index 41e0b49..80d29af 100644
+--- a/codex-rs/app-server/src/bespoke_event_handling.rs
++++ b/codex-rs/app-server/src/bespoke_event_handling.rs
+@@ -2127,6 +2127,11 @@ async fn on_command_execution_request_approval_response(
+                         ReviewDecision::Abort,
+                         Some(CommandExecutionStatus::Declined),
+                     ),
++                    // Only the acpc bridge offers these.
++                    CommandExecutionApprovalDecision::AcpcOption { .. } => (
++                        ReviewDecision::denied("unsupported approval decision"),
++                        Some(CommandExecutionStatus::Declined),
++                    ),
+                 },
+                 Err(err) => {
+                     error!("failed to deserialize CommandExecutionRequestApprovalResponse: {err}");
+diff --git a/codex-rs/tui/src/bottom_pane/approval_overlay.rs b/codex-rs/tui/src/bottom_pane/approval_overlay.rs
+index 46fd8ef..12bb539 100644
+--- a/codex-rs/tui/src/bottom_pane/approval_overlay.rs
++++ b/codex-rs/tui/src/bottom_pane/approval_overlay.rs
+@@ -853,6 +853,22 @@ fn command_decision_to_review_decision(
+         },
+         CommandExecutionApprovalDecision::Decline => ReviewDecision::Denied,
+         CommandExecutionApprovalDecision::Cancel => ReviewDecision::Abort,
++        CommandExecutionApprovalDecision::AcpcOption { option } => {
++            if option.kind.starts_with("allow") {
++                ReviewDecision::Approved
++            } else {
++                ReviewDecision::Denied
++            }
++        }
++    }
++}
++
++/// acpc: label for "decline and say what to do instead".
++fn tell_agent_label() -> String {
++    if crate::acpc::enabled() {
++        "No, and tell the agent what to do differently".to_string()
++    } else {
++        "No, and tell Codex what to do differently".to_string()
+     }
+ }
+ 
+@@ -862,9 +878,35 @@ fn exec_options(
+     additional_permissions: Option<&AdditionalPermissionProfile>,
+     keymap: &ApprovalKeymap,
+ ) -> Vec<ApprovalOption> {
++    // acpc: an agent may offer several options of one kind; only the first
++    // of each kind gets that kind's shortcut. The decline key stays with the
++    // trailing Cancel choice, so reject_always borrows deny only when the
++    // agent offers no reject_once.
++    let mut acpc_kinds_with_shortcut = std::collections::HashSet::new();
++    let acpc_has_reject_once = available_decisions.iter().any(|decision| {
++        matches!(decision, CommandExecutionApprovalDecision::AcpcOption { option } if option.kind == "reject_once")
++    });
+     available_decisions
+         .iter()
+         .filter_map(|decision| match decision {
++            CommandExecutionApprovalDecision::AcpcOption { option } => {
++                let shortcuts = if acpc_kinds_with_shortcut.insert(option.kind.clone()) {
++                    match option.kind.as_str() {
++                        "allow_once" => keymap.approve.clone(),
++                        "allow_always" => keymap.approve_for_session.clone(),
++                        "reject_once" => keymap.deny.clone(),
++                        "reject_always" if !acpc_has_reject_once => keymap.deny.clone(),
++                        _ => Vec::new(),
++                    }
++                } else {
++                    Vec::new()
++                };
++                Some(ApprovalOption {
++                    label: option.name.clone(),
++                    decision: ApprovalDecision::Command(decision.clone()),
++                    shortcuts,
++                })
++            }
+             CommandExecutionApprovalDecision::Accept => Some(ApprovalOption {
+                 label: if network_approval_context.is_some() {
+                     "Yes, just this once".to_string()
+@@ -936,7 +978,7 @@ fn exec_options(
+                 shortcuts: keymap.deny.clone(),
+             }),
+             CommandExecutionApprovalDecision::Cancel => Some(ApprovalOption {
+-                label: "No, and tell Codex what to do differently".to_string(),
++                label: tell_agent_label(),
+                 decision: ApprovalDecision::Command(CommandExecutionApprovalDecision::Cancel),
+                 shortcuts: keymap.decline.clone(),
+             }),
+@@ -1052,7 +1094,7 @@ fn patch_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
+             shortcuts: keymap.approve_for_session.clone(),
+         },
+         ApprovalOption {
+-            label: "No, and tell Codex what to do differently".to_string(),
++            label: tell_agent_label(),
+             decision: ApprovalDecision::FileChange(FileChangeApprovalDecision::Cancel),
+             shortcuts: keymap.decline.clone(),
+         },

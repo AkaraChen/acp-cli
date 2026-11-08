@@ -49,14 +49,18 @@ pub struct Harness {
     rx: mpsc::Receiver<QueuedOutgoingMessage>,
     pending: VecDeque<Value>,
     next_id: i64,
+    methods: Vec<(i64, String)>,
     shutdown: CancellationToken,
     pub state_dir: tempfile::TempDir,
     pub cwd: tempfile::TempDir,
 }
 
 pub struct HarnessConfig {
+    /// Scenario for every agent without its own.
     pub scenario: Option<Value>,
     pub agents: Vec<(String, String)>,
+    /// Per-agent scenarios, by slug.
+    pub agent_scenarios: Vec<(String, Value)>,
 }
 
 impl Default for HarnessConfig {
@@ -64,6 +68,7 @@ impl Default for HarnessConfig {
         Self {
             scenario: None,
             agents: vec![("mock".to_string(), "Mock".to_string())],
+            agent_scenarios: Vec::new(),
         }
     }
 }
@@ -72,28 +77,40 @@ impl Harness {
     pub async fn start(config: HarnessConfig) -> Self {
         let state_dir = tempfile::tempdir().expect("state dir");
         let cwd = tempfile::tempdir().expect("cwd");
-        let mut env = vec![(
-            "ACPC_MOCK_STATE".to_string(),
-            state_dir.path().display().to_string(),
-        )];
-        if let Some(scenario) = &config.scenario {
-            let path = state_dir.path().join("scenario.json");
-            std::fs::write(&path, serde_json::to_vec(scenario).expect("json")).expect("write");
-            env.push(("ACPC_MOCK_SCENARIO".to_string(), path.display().to_string()));
-        }
         let agents = config
             .agents
             .iter()
-            .map(|(slug, name)| AgentProfile {
-                slug: slug.clone(),
-                name: name.clone(),
-                command: AgentCommand {
-                    command: mock_agent_path().display().to_string(),
-                    args: Vec::new(),
-                    env: env.clone(),
-                    env_remove: Vec::new(),
-                    cwd: Some(cwd.path().to_path_buf()),
-                },
+            .map(|(slug, name)| {
+                // Each agent keeps its own state (sessions, sign-in marker).
+                let agent_dir = state_dir.path().join(slug);
+                std::fs::create_dir_all(&agent_dir).expect("agent state dir");
+                let mut env = vec![(
+                    "ACPC_MOCK_STATE".to_string(),
+                    agent_dir.display().to_string(),
+                )];
+                let scenario = config
+                    .agent_scenarios
+                    .iter()
+                    .find(|(scenario_slug, _)| scenario_slug == slug)
+                    .map(|(_, scenario)| scenario)
+                    .or(config.scenario.as_ref());
+                if let Some(scenario) = scenario {
+                    let path = agent_dir.join("scenario.json");
+                    std::fs::write(&path, serde_json::to_vec(scenario).expect("json"))
+                        .expect("write");
+                    env.push(("ACPC_MOCK_SCENARIO".to_string(), path.display().to_string()));
+                }
+                AgentProfile {
+                    slug: slug.clone(),
+                    name: name.clone(),
+                    command: AgentCommand {
+                        command: mock_agent_path().display().to_string(),
+                        args: Vec::new(),
+                        env,
+                        env_remove: Vec::new(),
+                        cwd: Some(cwd.path().to_path_buf()),
+                    },
+                }
             })
             .collect();
         let options = BridgeOptions {
@@ -130,6 +147,7 @@ impl Harness {
             rx,
             pending: VecDeque::new(),
             next_id: 1,
+            methods: Vec::new(),
             shutdown,
             state_dir,
             cwd,
@@ -165,14 +183,16 @@ impl Harness {
             .await
             .expect("timed out waiting for the bridge")
             .expect("bridge closed");
-        serde_json::to_value(&message.message).expect("json")
+        let value = serde_json::to_value(&message.message).expect("json");
+        assert_client_can_decode(&value);
+        value
     }
 
-    /// Send a request and return its result (or error object). Notifications
-    /// and server requests received meanwhile are kept for `next`.
-    pub async fn request(&mut self, method: &str, params: Value) -> Result<Value, Value> {
+    /// Send a request without waiting; pair with [`Self::response`].
+    pub async fn send_request(&mut self, method: &str, params: Value) -> i64 {
         let id = self.next_id;
         self.next_id += 1;
+        self.methods.push((id, method.to_string()));
         self.send(JSONRPCMessage::Request(JSONRPCRequest {
             id: RequestId::Integer(id),
             method: method.to_string(),
@@ -180,16 +200,35 @@ impl Harness {
             trace: None,
         }))
         .await;
+        id
+    }
+
+    /// The result (or error object) for request `id`. Notifications and
+    /// server requests received meanwhile are kept for `next`.
+    pub async fn response(&mut self, id: i64) -> Result<Value, Value> {
+        let method = self
+            .methods
+            .iter()
+            .find(|(sent, _)| *sent == id)
+            .map(|(_, method)| method.clone())
+            .unwrap_or_default();
         loop {
             let message = self.recv().await;
             if message.get("method").is_none() && message.get("id") == Some(&json!(id)) {
                 if let Some(result) = message.get("result") {
+                    assert_response_decodes(&method, id, result);
                     return Ok(result.clone());
                 }
                 return Err(message.get("error").cloned().unwrap_or(Value::Null));
             }
             self.pending.push_back(message);
         }
+    }
+
+    /// Send a request and return its result (or error object).
+    pub async fn request(&mut self, method: &str, params: Value) -> Result<Value, Value> {
+        let id = self.send_request(method, params).await;
+        self.response(id).await
     }
 
     /// Next notification or server request whose method matches.
@@ -278,4 +317,31 @@ impl Drop for Harness {
     fn drop(&mut self) {
         self.shutdown.cancel();
     }
+}
+
+/// Contract: every notification and server request the bridge emits must
+/// decode as the typed messages the Codex TUI parses. The remote client
+/// silently drops what it cannot decode, so drift would otherwise go unseen.
+pub fn assert_client_can_decode(message: &Value) {
+    let Some(method) = message.get("method").and_then(Value::as_str) else {
+        return;
+    };
+    if message.get("id").is_some() {
+        let request: JSONRPCRequest = serde_json::from_value(message.clone())
+            .unwrap_or_else(|err| panic!("server request {method} is not JSON-RPC: {err}"));
+        codex_app_server_protocol::ServerRequest::try_from(request)
+            .unwrap_or_else(|err| panic!("TUI cannot decode server request {method}: {err}"));
+    } else {
+        let notification: JSONRPCNotification = serde_json::from_value(message.clone())
+            .unwrap_or_else(|err| panic!("notification {method} is not JSON-RPC: {err}"));
+        codex_app_server_protocol::ServerNotification::try_from(notification)
+            .unwrap_or_else(|err| panic!("TUI cannot decode notification {method}: {err}"));
+    }
+}
+
+/// Contract: a response must decode as the typed response of its method.
+pub fn assert_response_decodes(method: &str, id: i64, result: &Value) {
+    let tagged = json!({ "method": method, "id": id, "response": result });
+    serde_json::from_value::<codex_app_server_protocol::ClientResponse>(tagged)
+        .unwrap_or_else(|err| panic!("TUI cannot decode the {method} response: {err}\n{result}"));
 }

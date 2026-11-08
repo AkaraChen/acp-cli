@@ -55,7 +55,6 @@ metrics_exporter = "none"
 "#;
 
 pub struct Home {
-    pub data_dir: PathBuf,
     pub codex_home: PathBuf,
     pub log_dir: PathBuf,
     pub run_dir: PathBuf,
@@ -74,7 +73,6 @@ impl Home {
         std::fs::write(&config, MANAGED_CODEX_CONFIG)
             .with_context(|| format!("writing {}", config.display()))?;
         Ok(Self {
-            data_dir,
             codex_home,
             log_dir,
             run_dir,

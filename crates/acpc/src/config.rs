@@ -101,17 +101,38 @@ impl Config {
             if !seen.insert(agent.slug.as_str()) {
                 bail!("duplicate agent slug `{}`", agent.slug);
             }
-            if let Some(model_override) = &agent.model_override
-                && model_override.env.is_none()
-                && model_override.arg.is_none()
-            {
-                bail!("agent `{}`: model_override needs `env` or `arg`", agent.slug);
+            match &agent.model_override {
+                Some(model_override) if model_override.env.is_some() == model_override.arg.is_some() => {
+                    bail!("agent `{}`: model_override needs exactly one of `env` or `arg`", agent.slug);
+                }
+                None if agent.default_model.is_some() => {
+                    bail!(
+                        "agent `{}`: default_model needs model_override to tell the agent which model to use",
+                        agent.slug
+                    );
+                }
+                _ => {}
             }
         }
         for server in &self.mcp_servers {
             if server.command.is_some() == server.url.is_some() {
                 bail!(
                     "mcp server `{}`: set exactly one of `command` or `url`",
+                    server.name
+                );
+            }
+            if server.command.is_some() && (server.transport.is_some() || !server.headers.is_empty()) {
+                bail!(
+                    "mcp server `{}`: `transport` and `headers` only apply to `url` servers",
+                    server.name
+                );
+            }
+            if let Some(transport) = &server.transport
+                && transport != "http"
+                && transport != "sse"
+            {
+                bail!(
+                    "mcp server `{}`: transport must be `http` or `sse`, not `{transport}`",
                     server.name
                 );
             }
@@ -255,5 +276,20 @@ model_override = { env = "B_MODEL" }
         )
         .expect("config");
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_settings_that_would_do_nothing() {
+        let agent = "[[agents]]\nslug = \"a\"\ncommand = \"x\"\n";
+        for extra in [
+            "default_model = \"m\"\n",
+            "model_override = { env = \"M\", arg = \"--model\" }\n",
+            "[[mcp_servers]]\nname = \"s\"\nurl = \"https://x\"\ntransport = \"ws\"\n",
+            "[[mcp_servers]]\nname = \"s\"\ncommand = \"s\"\ntransport = \"http\"\n",
+            "[[mcp_servers]]\nname = \"s\"\ncommand = \"s\"\nheaders = { A = \"b\" }\n",
+        ] {
+            let config: Config = toml::from_str(&format!("{agent}{extra}")).expect("config");
+            assert!(config.validate().is_err(), "accepted:\n{extra}");
+        }
     }
 }

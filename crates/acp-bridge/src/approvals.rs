@@ -2,6 +2,7 @@
 
 use acp_client::PendingRequestId;
 use acp_client::schema as acp;
+use codex_app_server_protocol::AcpcPermissionOption;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::CommandExecutionApprovalKind;
 use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
@@ -20,27 +21,34 @@ use codex_app_server_protocol::ThreadItemPayload;
 use crate::records;
 use crate::server::Bridge;
 use crate::threads::emit_all;
+use crate::threads::PendingKind;
 use crate::tool_calls::ItemKind;
 
 /// What the user picked, independent of how it was presented.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Choice {
     AllowOnce,
     AllowAlways,
     RejectOnce,
-    RejectAlways,
+    /// One of the agent's options, picked by id.
+    Option(acp::PermissionOptionId),
     /// Stop the turn.
     Cancel,
 }
 
 /// The ACP option for a choice, falling back to the closest available kind
 /// (allow_once ↔ allow_always, reject_once ↔ reject_always).
-pub(crate) fn option_for(options: &[acp::PermissionOption], choice: Choice) -> Option<acp::PermissionOptionId> {
+pub(crate) fn option_for(options: &[acp::PermissionOption], choice: &Choice) -> Option<acp::PermissionOptionId> {
     let order: &[acp::PermissionOptionKind] = match choice {
         Choice::AllowOnce => &[acp::PermissionOptionKind::AllowOnce, acp::PermissionOptionKind::AllowAlways],
         Choice::AllowAlways => &[acp::PermissionOptionKind::AllowAlways, acp::PermissionOptionKind::AllowOnce],
         Choice::RejectOnce => &[acp::PermissionOptionKind::RejectOnce, acp::PermissionOptionKind::RejectAlways],
-        Choice::RejectAlways => &[acp::PermissionOptionKind::RejectAlways, acp::PermissionOptionKind::RejectOnce],
+        Choice::Option(option_id) => {
+            return options
+                .iter()
+                .any(|option| &option.option_id == option_id)
+                .then(|| option_id.clone());
+        }
         Choice::Cancel => &[],
     };
     order.iter().find_map(|kind| {
@@ -51,24 +59,41 @@ pub(crate) fn option_for(options: &[acp::PermissionOption], choice: Choice) -> O
     })
 }
 
-fn has_kind(options: &[acp::PermissionOption], kind: acp::PermissionOptionKind) -> bool {
-    options.iter().any(|option| option.kind == kind)
+fn kind_name(kind: &acp::PermissionOptionKind) -> &'static str {
+    match kind {
+        acp::PermissionOptionKind::AllowOnce => "allow_once",
+        acp::PermissionOptionKind::AllowAlways => "allow_always",
+        acp::PermissionOptionKind::RejectOnce => "reject_once",
+        acp::PermissionOptionKind::RejectAlways => "reject_always",
+        _ => "other",
+    }
 }
 
+/// The agent's own options, shown with their own labels (patches/0004),
+/// plus Codex's "stop and tell the agent" choice.
 fn command_decisions(options: &[acp::PermissionOption]) -> Vec<CommandExecutionApprovalDecision> {
-    let mut decisions = Vec::new();
-    if has_kind(options, acp::PermissionOptionKind::AllowOnce) {
-        decisions.push(CommandExecutionApprovalDecision::Accept);
-    }
-    if has_kind(options, acp::PermissionOptionKind::AllowAlways) {
-        decisions.push(CommandExecutionApprovalDecision::AcceptForSession);
-    }
-    if decisions.is_empty() && !options.is_empty() {
-        decisions.push(CommandExecutionApprovalDecision::Accept);
-    }
-    decisions.push(CommandExecutionApprovalDecision::Decline);
-    decisions.push(CommandExecutionApprovalDecision::Cancel);
-    decisions
+    options
+        .iter()
+        .map(|option| CommandExecutionApprovalDecision::AcpcOption {
+            option: AcpcPermissionOption {
+                option_id: option.option_id.to_string(),
+                name: option.name.clone(),
+                kind: kind_name(&option.kind).to_string(),
+            },
+        })
+        .chain(std::iter::once(CommandExecutionApprovalDecision::Cancel))
+        .collect()
+}
+
+/// Whether Codex's fixed file-change choices (yes / yes, don't ask again /
+/// no) say exactly what the agent offers: one option of each kind.
+fn fits_file_change_overlay(options: &[acp::PermissionOption]) -> bool {
+    let count = |kind: acp::PermissionOptionKind| options.iter().filter(|option| option.kind == kind).count();
+    let rejects = count(acp::PermissionOptionKind::RejectOnce) + count(acp::PermissionOptionKind::RejectAlways);
+    count(acp::PermissionOptionKind::AllowOnce) == 1
+        && count(acp::PermissionOptionKind::AllowAlways) == 1
+        && rejects == 1
+        && options.len() == 3
 }
 
 pub(crate) fn on_permission(
@@ -94,6 +119,11 @@ pub(crate) fn on_permission(
         cancel(&connection);
         return;
     };
+    if active.cancel_requested {
+        // prompt-turn.mdx: once cancelled, every permission is `cancelled`.
+        cancel(&connection);
+        return;
+    }
     let mut emit = Vec::new();
     let (item_id, kind) = active.builder.tool_item(&request.tool_call, &mut emit);
     let turn_id = active.builder.id.clone();
@@ -107,7 +137,7 @@ pub(crate) fn on_permission(
     let options = request.options.clone();
     let agent_owned = agent.to_string();
     let request_id = match kind {
-        ItemKind::FileChange => {
+        ItemKind::FileChange if fits_file_change_overlay(&options) => {
             let params = FileChangeRequestApprovalParams {
                 thread_id: thread_id.clone(),
                 turn_id,
@@ -129,11 +159,13 @@ pub(crate) fn on_permission(
                             FileChangeApprovalDecision::Decline => Choice::RejectOnce,
                             FileChangeApprovalDecision::Cancel => Choice::Cancel,
                         });
-                    answer(bridge, &agent_owned, id, &options, choice);
+                    answer(bridge, &agent_owned, id, &options, &choice);
                 }),
             )
         }
-        ItemKind::Command | ItemKind::Read | ItemKind::Dynamic => {
+        // Other calls, and file changes whose options the file overlay
+        // cannot express, use the command overlay with the agent's options.
+        ItemKind::FileChange | ItemKind::Command | ItemKind::Read | ItemKind::Dynamic => {
             let command = match bridge
                 .threads
                 .get(&thread_id)
@@ -179,8 +211,11 @@ pub(crate) fn on_permission(
                             CommandExecutionApprovalDecision::AcceptForSession => Choice::AllowAlways,
                             CommandExecutionApprovalDecision::Decline => Choice::RejectOnce,
                             CommandExecutionApprovalDecision::Cancel => Choice::Cancel,
+                            CommandExecutionApprovalDecision::AcpcOption { option } => {
+                                Choice::Option(acp::PermissionOptionId::new(option.option_id))
+                            }
                         });
-                    answer(bridge, &agent_owned, id, &options, choice);
+                    answer(bridge, &agent_owned, id, &options, &choice);
                 }),
             )
         }
@@ -190,7 +225,7 @@ pub(crate) fn on_permission(
         .get_mut(&thread_id)
         .and_then(|thread| thread.active.as_mut())
     {
-        active.pending.insert(id, request_id);
+        active.pending.insert(id, (request_id, PendingKind::Permission));
     }
 }
 
@@ -200,8 +235,16 @@ pub(crate) fn answer(
     agent: &str,
     id: PendingRequestId,
     options: &[acp::PermissionOption],
-    choice: Choice,
+    choice: &Choice,
 ) {
+    // The thread must be found before the request is forgotten.
+    let thread_id = bridge.threads.on_agent(agent).into_iter().find(|thread_id| {
+        bridge
+            .threads
+            .get(thread_id)
+            .and_then(|thread| thread.active.as_ref())
+            .is_some_and(|active| active.pending.contains_key(&id))
+    });
     forget_pending(bridge, agent, id);
     let Some(connection) = bridge.agents.connection(agent) else {
         return;
@@ -212,19 +255,10 @@ pub(crate) fn answer(
         }
         None => acp::RequestPermissionOutcome::Cancelled,
     };
-    if choice == Choice::Cancel {
-        // "Stop": decline this request, then cancel the turn it belongs to.
-        let session = bridge
-            .threads
-            .on_agent(agent)
-            .into_iter()
-            .find_map(|thread_id| {
-                let thread = bridge.threads.get(&thread_id)?;
-                let active = thread.active.as_ref()?;
-                active.pending.contains_key(&id).then(|| thread_id.clone())
-            });
+    if *choice == Choice::Cancel {
+        // "Stop": answer this request cancelled, then cancel its turn.
         connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
-        if let Some(thread_id) = session {
+        if let Some(thread_id) = thread_id {
             let _ = crate::threads::interrupt(bridge, &thread_id);
         }
         return;
@@ -251,7 +285,7 @@ pub(crate) fn on_pending_resolved(bridge: &mut Bridge, agent: &str, id: PendingR
             .get_mut(&thread_id)
             .and_then(|thread| thread.active.as_mut())
             .and_then(|active| active.pending.remove(&id));
-        if let Some(request_id) = request_id {
+        if let Some((request_id, _)) = request_id {
             bridge.resolve_server_request(&request_id);
         }
     }
@@ -275,29 +309,34 @@ pub(crate) fn on_elicitation(
     id: PendingRequestId,
     request: acp::CreateElicitationRequest,
 ) {
-    let decline = |bridge: &Bridge| {
+    // A request the user never saw is cancelled, never declined on their
+    // behalf.
+    let cancel = |bridge: &Bridge| {
         if let Some(connection) = bridge.agents.connection(agent) {
             connection.respond_elicitation(
                 id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
             );
         }
     };
-    // Session-scoped requests belong to their thread; request-scoped ones
-    // (no session) are shown on any loaded thread of this agent.
+    // Session-scoped requests belong to their thread. Request-scoped ones
+    // (sign-in, setup) have none; the TUI only shows requests on a thread,
+    // so they go to the most recently active loaded thread.
     let thread_id = match elicitation_session(&request) {
         Some(session_id) => bridge
             .threads
             .by_session_mut(agent, &session_id)
+            .filter(|thread| {
+                !thread
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.cancel_requested)
+            })
             .map(|thread| thread.id.clone()),
-        None => bridge
-            .threads
-            .on_agent(agent)
-            .into_iter()
-            .find(|thread_id| bridge.threads.get(thread_id).is_some_and(|t| t.loaded)),
+        None => bridge.threads.most_recent_loaded(),
     };
     let Some(thread_id) = thread_id else {
-        decline(bridge);
+        cancel(bridge);
         return;
     };
     let turn_id = bridge
@@ -311,16 +350,16 @@ pub(crate) fn on_elicitation(
         .map_or_else(|| agent.to_string(), |profile| profile.name.clone());
     let elicitation = match &request.mode {
         acp::ElicitationMode::Form(form) => {
-            let schema = serde_json::to_value(&form.requested_schema)
-                .ok()
-                .and_then(|value| serde_json::from_value::<McpElicitationSchema>(value).ok());
-            let Some(requested_schema) = schema else {
-                decline(bridge);
+            let Some((requested_schema, message)) =
+                mcp_schema(&form.requested_schema, &request.message)
+            else {
+                tracing::warn!(%agent, "elicitation schema cannot be shown; cancelling");
+                cancel(bridge);
                 return;
             };
             McpServerElicitationRequest::Form {
                 meta: None,
-                message: request.message.clone(),
+                message,
                 requested_schema,
             }
         }
@@ -331,7 +370,7 @@ pub(crate) fn on_elicitation(
             elicitation_id: url.elicitation_id.to_string(),
         },
         _ => {
-            decline(bridge);
+            cancel(bridge);
             return;
         }
     };
@@ -371,7 +410,61 @@ pub(crate) fn on_elicitation(
         .get_mut(&thread_id)
         .and_then(|thread| thread.active.as_mut())
     {
-        active.pending.insert(id, request_id);
+        active.pending.insert(id, (request_id, PendingKind::Elicitation));
+    }
+}
+
+/// The ACP form schema as the TUI's MCP-style schema. ACP adds a few
+/// presentation-only keys MCP rejects (schema title/description, string
+/// patterns, `_meta`, option descriptions): the schema text moves into the
+/// message and the rest is dropped.
+fn mcp_schema(
+    schema: &acp::ElicitationSchema,
+    message: &str,
+) -> Option<(McpElicitationSchema, String)> {
+    let mut value = serde_json::to_value(schema).ok()?;
+    let object = value.as_object_mut()?;
+    let mut message = message.to_string();
+    for key in ["title", "description"] {
+        if let Some(text) = object.remove(key).as_ref().and_then(serde_json::Value::as_str)
+            && !text.is_empty()
+            && !message.contains(text)
+        {
+            message.push_str("\n\n");
+            message.push_str(text);
+        }
+    }
+    object.remove("_meta");
+    if let Some(properties) = object
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for property in properties.values_mut() {
+            strip_property(property);
+        }
+    }
+    let schema = serde_json::from_value::<McpElicitationSchema>(value).ok()?;
+    Some((schema, message))
+}
+
+fn strip_property(property: &mut serde_json::Value) {
+    let Some(object) = property.as_object_mut() else {
+        return;
+    };
+    object.remove("_meta");
+    object.remove("pattern");
+    for key in ["oneOf", "anyOf"] {
+        if let Some(options) = object.get_mut(key).and_then(serde_json::Value::as_array_mut) {
+            for option in options {
+                if let Some(option) = option.as_object_mut() {
+                    option.remove("description");
+                    option.remove("_meta");
+                }
+            }
+        }
+    }
+    if let Some(items) = object.get_mut("items") {
+        strip_property(items);
     }
 }
 
@@ -398,16 +491,43 @@ mod tests {
             option("yes", acp::PermissionOptionKind::AllowOnce),
             option("no-forever", acp::PermissionOptionKind::RejectAlways),
         ];
-        assert_eq!(option_for(&options, Choice::AllowAlways).map(|o| o.to_string()), Some("yes".into()));
-        assert_eq!(option_for(&options, Choice::RejectOnce).map(|o| o.to_string()), Some("no-forever".into()));
-        assert_eq!(option_for(&options, Choice::Cancel), None);
+        assert_eq!(option_for(&options, &Choice::AllowAlways).map(|o| o.to_string()), Some("yes".into()));
+        assert_eq!(option_for(&options, &Choice::RejectOnce).map(|o| o.to_string()), Some("no-forever".into()));
+        assert_eq!(option_for(&options, &Choice::Cancel), None);
         assert_eq!(
-            command_decisions(&options),
-            vec![
-                CommandExecutionApprovalDecision::Accept,
-                CommandExecutionApprovalDecision::Decline,
-                CommandExecutionApprovalDecision::Cancel,
-            ]
+            option_for(&options, &Choice::Option(acp::PermissionOptionId::new("no-forever")))
+                .map(|o| o.to_string()),
+            Some("no-forever".into())
         );
+        assert_eq!(option_for(&options, &Choice::Option(acp::PermissionOptionId::new("gone"))), None);
+    }
+
+    #[test]
+    fn command_decisions_carry_the_agents_options() {
+        let options = vec![
+            option("a", acp::PermissionOptionKind::AllowAlways),
+            option("b", acp::PermissionOptionKind::AllowAlways),
+        ];
+        let decisions = command_decisions(&options);
+        assert_eq!(decisions.len(), 3);
+        assert_eq!(decisions[2], CommandExecutionApprovalDecision::Cancel);
+        assert!(matches!(
+            &decisions[1],
+            CommandExecutionApprovalDecision::AcpcOption { option } if option.option_id == "b" && option.kind == "allow_always"
+        ));
+    }
+
+    #[test]
+    fn file_overlay_needs_one_option_of_each_kind() {
+        let canonical = vec![
+            option("y", acp::PermissionOptionKind::AllowOnce),
+            option("a", acp::PermissionOptionKind::AllowAlways),
+            option("n", acp::PermissionOptionKind::RejectOnce),
+        ];
+        assert!(fits_file_change_overlay(&canonical));
+        assert!(!fits_file_change_overlay(&canonical[..2]));
+        let mut doubled = canonical.clone();
+        doubled.push(option("a2", acp::PermissionOptionKind::AllowAlways));
+        assert!(!fits_file_change_overlay(&doubled));
     }
 }

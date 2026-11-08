@@ -47,7 +47,33 @@ pub(crate) struct ActiveTurn {
     pub(crate) prompt_id: Option<PromptId>,
     pub(crate) cancel_requested: bool,
     /// Agent permission/elicitation requests shown to the client.
-    pub(crate) pending: HashMap<PendingRequestId, RequestId>,
+    pub(crate) pending: HashMap<PendingRequestId, (RequestId, PendingKind)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingKind {
+    Permission,
+    Elicitation,
+}
+
+/// Answer an agent request nobody will answer anymore, as the spec asks
+/// for abandoned requests (outcome `cancelled` / action `cancel`).
+pub(crate) fn abandon_agent_request(
+    connection: &AgentConnection,
+    id: PendingRequestId,
+    kind: PendingKind,
+) {
+    match kind {
+        PendingKind::Permission => {
+            connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
+        }
+        PendingKind::Elicitation => {
+            connection.respond_elicitation(
+                id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+            );
+        }
+    }
 }
 
 /// History reconstruction while `session/load` replays the conversation.
@@ -177,6 +203,15 @@ impl Threads {
 
     pub(crate) fn take_orphans(&mut self, thread_id: &str) -> Vec<acp::SessionNotification> {
         self.orphans.remove(thread_id).unwrap_or_default()
+    }
+
+    /// The loaded thread most recently active, on any agent.
+    pub(crate) fn most_recent_loaded(&self) -> Option<String> {
+        self.by_id
+            .values()
+            .filter(|thread| thread.loaded)
+            .max_by_key(|thread| thread.updated_at)
+            .map(|thread| thread.id.clone())
     }
 
     pub(crate) fn on_agent(&self, agent: &str) -> Vec<String> {
@@ -330,7 +365,7 @@ pub(crate) fn settings_updated(thread: &ThreadState) -> ServerNotification {
     })
 }
 
-fn usage_updated(thread_id: &str, turn_id: &str, used: u64, size: u64) -> ServerNotification {
+pub(crate) fn usage_updated(thread_id: &str, turn_id: &str, used: u64, size: u64) -> ServerNotification {
     let used = i64::try_from(used).unwrap_or(i64::MAX);
     let breakdown = TokenUsageBreakdown {
         total_tokens: used,
@@ -469,7 +504,12 @@ pub(crate) fn start_turn(
         return;
     }
     let Some(session_id) = thread.session_id.clone().filter(|_| thread.loaded) else {
-        bridge.respond_error(conn, id, crate::server::INVALID_REQUEST, "thread is not loaded");
+        let message = if thread.session_id.is_some() {
+            "The agent restarted since this session was opened; use /resume to reopen it."
+        } else {
+            "thread is not loaded"
+        };
+        bridge.respond_error(conn, id, crate::server::INVALID_REQUEST, message);
         return;
     };
     let agent = thread.agent.clone();
@@ -483,7 +523,7 @@ pub(crate) fn start_turn(
         bridge.respond_error(conn, id, crate::server::INVALID_PARAMS, "empty prompt");
         return;
     }
-    let config_changes = settings.config_changes(&thread.config_options);
+    let current_options = thread.config_options.clone();
 
     let turn_id = Uuid::new_v4().to_string();
     let started_at = records::now_ms();
@@ -524,17 +564,9 @@ pub(crate) fn start_turn(
     }));
 
     bridge.spawn(async move {
-        let mut options = None;
-        for (config_id, value) in config_changes {
-            let request = acp::SetSessionConfigOptionRequest::new(
-                session_id.clone(),
-                config_id,
-                acp::SessionConfigOptionValue::value_id(value),
-            );
-            match connection.set_config_option(request).await {
-                Ok(response) => options = Some(response.config_options),
-                Err(err) => tracing::warn!("failed to apply turn settings: {err}"),
-            }
+        let (options, error) = settings.apply(&connection, &session_id, current_options).await;
+        if let Some(error) = error {
+            tracing::warn!("failed to apply turn settings: {error}");
         }
         move |bridge: &mut Bridge| {
             let Some(thread) = bridge.threads.get_mut(&thread_id_owned) else {
@@ -571,25 +603,61 @@ pub(crate) struct TurnSettings {
 }
 
 impl TurnSettings {
-    pub(crate) fn config_changes(
-        &self,
-        options: &[acp::SessionConfigOption],
-    ) -> Vec<(acp::SessionConfigId, String)> {
-        let mut changes = Vec::new();
+    /// Apply the model, then the effort. The effort change is worked out from
+    /// the options the model change returned: a new model may offer
+    /// different thought levels. Returns the latest options (if any change
+    /// was made) and the first error.
+    pub(crate) async fn apply(
+        self,
+        connection: &AgentConnection,
+        session_id: &acp::SessionId,
+        mut options: Vec<acp::SessionConfigOption>,
+    ) -> (Option<Vec<acp::SessionConfigOption>>, Option<String>) {
+        let mut changed = false;
         if let Some(model) = &self.model
-            && model != &models::current_model(options)
-            && let Some(change) = models::model_value(options, model)
+            && model != &models::current_model(&options)
+            && let Some((config_id, value)) = models::model_value(&options, model)
         {
-            changes.push(change);
+            match set_select(connection, session_id, config_id, value).await {
+                Ok(updated) => {
+                    options = updated;
+                    changed = true;
+                }
+                Err(err) => return (changed.then_some(options), Some(err)),
+            }
         }
         if let Some(effort) = &self.effort
-            && Some(effort) != models::current_effort(options).as_ref()
-            && let Some(change) = models::effort_value(options, effort)
+            && Some(effort) != models::current_effort(&options).as_ref()
+            && let Some((config_id, value)) = models::effort_value(&options, effort)
         {
-            changes.push(change);
+            match set_select(connection, session_id, config_id, value).await {
+                Ok(updated) => {
+                    options = updated;
+                    changed = true;
+                }
+                Err(err) => return (changed.then_some(options), Some(err)),
+            }
         }
-        changes
+        (changed.then_some(options), None)
     }
+}
+
+async fn set_select(
+    connection: &AgentConnection,
+    session_id: &acp::SessionId,
+    config_id: acp::SessionConfigId,
+    value: String,
+) -> Result<Vec<acp::SessionConfigOption>, String> {
+    let request = acp::SetSessionConfigOptionRequest::new(
+        session_id.clone(),
+        config_id,
+        acp::SessionConfigOptionValue::value_id(value),
+    );
+    connection
+        .set_config_option(request)
+        .await
+        .map(|response| response.config_options)
+        .map_err(|err| err.message)
 }
 
 /// `turn/interrupt` → `session/cancel`. The turn ends when the agent
@@ -719,12 +787,16 @@ pub(crate) fn finish_turn_with(
     let Some(active) = thread.active.take() else {
         return;
     };
-    let pending: Vec<RequestId> = active.pending.values().cloned().collect();
+    let agent = thread.agent.clone();
     let mut emit = Vec::new();
     let turn = active.builder.finish(status, error, &mut emit);
     thread.turns.push(turn.clone());
     thread.updated_at = records::now_secs();
-    for request_id in pending {
+    let connection = bridge.agents.connection(&agent);
+    for (pending_id, (request_id, kind)) in active.pending {
+        if let Some(connection) = &connection {
+            abandon_agent_request(connection, pending_id, kind);
+        }
         bridge.resolve_server_request(&request_id);
     }
     emit_all(bridge, emit);
@@ -736,31 +808,52 @@ pub(crate) fn finish_turn_with(
 
 /// The agent process died: fail running turns and unload its sessions.
 pub(crate) fn on_agent_exited(bridge: &mut Bridge, agent: &str, reason: &str, stderr: &str) {
-    let ids = bridge.threads.on_agent(agent);
     let detail = stderr.lines().rev().take(5).collect::<Vec<_>>();
     let mut message = format!("Agent `{agent}` exited: {reason}");
     if !detail.is_empty() {
-        message.push_str("\n");
+        message.push('\n');
         message.push_str(&detail.into_iter().rev().collect::<Vec<_>>().join("\n"));
     }
-    for id in ids {
+    let had_threads = unload_agent_threads(bridge, agent, &message);
+    if !had_threads {
+        bridge.notify(ServerNotification::Warning(WarningNotification {
+            thread_id: None,
+            message,
+        }));
+    }
+}
+
+/// The agent's sessions are gone (exit or restart): fail running turns,
+/// answer pending resumes, and unload its threads. Returns whether the
+/// agent had any loaded thread.
+pub(crate) fn unload_agent_threads(bridge: &mut Bridge, agent: &str, message: &str) -> bool {
+    let mut any = false;
+    for id in bridge.threads.on_agent(agent) {
         let had_turn = bridge
             .threads
             .get(&id)
             .is_some_and(|thread| thread.active.is_some());
         if had_turn {
-            let error = records::turn_error(message.clone());
+            let error = records::turn_error(message.to_string());
             finish_turn_with(bridge, &id, TurnStatus::Failed, Some(error));
         }
-        if let Some(thread) = bridge.threads.get_mut(&id) {
-            thread.loaded = false;
-            thread.replay = None;
+        let Some(thread) = bridge.threads.get_mut(&id) else {
+            continue;
+        };
+        let was_loaded = thread.loaded || thread.replay.is_some();
+        thread.loaded = false;
+        if let Some(reply) = thread.replay.take().and_then(|replay| replay.reply) {
+            bridge.respond_error(reply.0, reply.1, crate::server::INTERNAL_ERROR, message);
         }
-        bridge.notify(ServerNotification::Warning(WarningNotification {
-            thread_id: Some(id),
-            message: message.clone(),
-        }));
+        if was_loaded {
+            any = true;
+            bridge.notify(ServerNotification::Warning(WarningNotification {
+                thread_id: Some(id),
+                message: message.to_string(),
+            }));
+        }
     }
+    any
 }
 
 pub(crate) fn connection_for(bridge: &Bridge, thread: &ThreadState) -> Option<Arc<AgentConnection>> {

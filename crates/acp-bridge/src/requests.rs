@@ -262,15 +262,22 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
         ClientRequest::TurnSteer { request_id, .. } => {
             // ACP has no steering: make the TUI queue the input for the next
             // turn instead (it checks for this exact error shape).
+            let error = codex_app_server_protocol::TurnError {
+                message: "the agent cannot be steered mid-turn".to_string(),
+                codex_error_info: Some(
+                    codex_app_server_protocol::CodexErrorInfo::ActiveTurnNotSteerable {
+                        turn_kind: codex_app_server_protocol::NonSteerableTurnKind::Review,
+                    },
+                ),
+                additional_details: None,
+                misalignment: None,
+            };
             bridge.respond_error_data(
                 conn,
                 request_id,
                 INVALID_REQUEST,
-                "the agent cannot be steered mid-turn",
-                Some(serde_json::json!({
-                    "message": "the agent cannot be steered mid-turn",
-                    "codexErrorInfo": "activeTurnNotSteerable",
-                })),
+                error.message.clone(),
+                serde_json::to_value(&error).ok(),
             );
         }
         ClientRequest::ThreadShellCommand { request_id, params } => {
@@ -366,7 +373,7 @@ fn settings_update(
         bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {thread_id}"));
         return;
     };
-    let changes = settings.config_changes(&thread.config_options);
+    let options = thread.config_options.clone();
     let (Some(session_id), Some(connection)) = (
         thread.session_id.clone(),
         threads::connection_for(bridge, thread),
@@ -375,19 +382,7 @@ fn settings_update(
         return;
     };
     bridge.spawn(async move {
-        let mut options = None;
-        let mut error = None;
-        for (config_id, value) in changes {
-            let request = acp_client::schema::SetSessionConfigOptionRequest::new(
-                session_id.clone(),
-                config_id,
-                acp_client::schema::SessionConfigOptionValue::value_id(value),
-            );
-            match connection.set_config_option(request).await {
-                Ok(response) => options = Some(response.config_options),
-                Err(err) => error = Some(err.message),
-            }
-        }
+        let (options, error) = settings.apply(&connection, &session_id, options).await;
         Box::new(move |bridge: &mut Bridge| {
             if let Some(options) = options
                 && let Some(thread) = bridge.threads.get_mut(&thread_id)

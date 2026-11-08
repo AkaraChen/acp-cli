@@ -34,12 +34,78 @@ pub async fn connect_with_auth(
     new_session: Option<acp::NewSessionRequest>,
     force_login: bool,
 ) -> anyhow::Result<Connected> {
-    let (mut connection, mut events) = AgentConnection::connect(profile.command.clone(), client)
+    let (connection, events) = AgentConnection::connect(profile.command.clone(), client)
         .await
         .with_context(|| format!("could not start agent `{}`", profile.slug))?;
+    let mut held = Vec::new();
+    let result = sign_in_and_open(profile, client, connection, events, new_session, force_login, &mut held).await;
+    result.map(|mut connected| {
+        connected.events = replay_held(held, connected.events);
+        connected
+    })
+}
+
+/// Events seen while acpc waited stay queued for the bridge.
+fn replay_held(
+    held: Vec<AgentEvent>,
+    mut events: mpsc::UnboundedReceiver<AgentEvent>,
+) -> mpsc::UnboundedReceiver<AgentEvent> {
+    if held.is_empty() {
+        return events;
+    }
+    let (tx, rx) = mpsc::unbounded_channel();
+    for event in held {
+        let _ = tx.send(event);
+    }
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            if tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// Await `work` while answering what the agent asks meanwhile: sign-in
+/// forms are shown on the terminal, permissions are cancelled (no turn is
+/// running), anything else is held for the bridge.
+async fn answering<T>(
+    work: impl std::future::Future<Output = T>,
+    connection: &AgentConnection,
+    events: &mut mpsc::UnboundedReceiver<AgentEvent>,
+    held: &mut Vec<AgentEvent>,
+) -> T {
+    tokio::pin!(work);
+    loop {
+        tokio::select! {
+            result = &mut work => return result,
+            Some(event) = events.recv() => match event {
+                AgentEvent::PermissionRequested { id, .. } => {
+                    connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
+                }
+                AgentEvent::ElicitationRequested { id, request } => {
+                    let response = crate::prompt::elicit(request).await;
+                    connection.respond_elicitation(id, response);
+                }
+                other => held.push(other),
+            },
+        }
+    }
+}
+
+async fn sign_in_and_open(
+    profile: &AgentProfile,
+    client: &ClientOptions,
+    mut connection: Arc<AgentConnection>,
+    mut events: mpsc::UnboundedReceiver<AgentEvent>,
+    new_session: Option<acp::NewSessionRequest>,
+    force_login: bool,
+    held: &mut Vec<AgentEvent>,
+) -> anyhow::Result<Connected> {
     let mut attempted = force_login;
     if force_login {
-        (connection, events) = authenticate(profile, client, connection, events).await?;
+        (connection, events) = authenticate(profile, client, connection, events, held).await?;
     }
     let Some(new_session) = new_session else {
         return Ok(Connected {
@@ -54,7 +120,7 @@ pub async fn connect_with_auth(
                 .caps()
                 .filter_mcp_servers(new_session.mcp_servers.clone()),
         );
-        match connection.new_session(request).await {
+        match answering(connection.new_session(request), &connection, &mut events, held).await {
             Ok(session) => {
                 return Ok(Connected {
                     connection,
@@ -65,23 +131,41 @@ pub async fn connect_with_auth(
             Err(err) if err.is_auth_required() && !attempted => {
                 attempted = true;
                 eprintln!("{} needs you to sign in.", profile.name);
-                (connection, events) = authenticate(profile, client, connection, events).await?;
+                (connection, events) =
+                    authenticate(profile, client, connection, events, held).await?;
             }
             Err(err) if err.is_auth_required() => {
                 bail!("{} still requires authentication: {}", profile.name, err.message)
             }
-            Err(err) => bail!("{} could not create a session: {}", profile.name, err.message),
+            Err(err) => bail!(
+                "{} could not create a session: {}{}",
+                profile.name,
+                err.message,
+                stderr_note(&connection)
+            ),
         }
     }
 }
 
 type Pair = (Arc<AgentConnection>, mpsc::UnboundedReceiver<AgentEvent>);
 
+fn stderr_note(connection: &AgentConnection) -> String {
+    let stderr = connection.stderr_tail();
+    let lines: Vec<&str> = stderr.lines().collect();
+    let tail = &lines[lines.len().saturating_sub(5)..];
+    if tail.is_empty() {
+        String::new()
+    } else {
+        format!("\nagent stderr:\n{}", tail.join("\n"))
+    }
+}
+
 async fn authenticate(
     profile: &AgentProfile,
     client: &ClientOptions,
     connection: Arc<AgentConnection>,
-    events: mpsc::UnboundedReceiver<AgentEvent>,
+    mut events: mpsc::UnboundedReceiver<AgentEvent>,
+    held: &mut Vec<AgentEvent>,
 ) -> anyhow::Result<Pair> {
     let methods = connection.caps().auth_methods().to_vec();
     if methods.is_empty() {
@@ -99,15 +183,16 @@ async fn authenticate(
             let auth = TerminalAuthCommand::new(&profile.command, &terminal);
             connection.shutdown().await;
             drop(events);
-            run_terminal_login(&auth)?;
+            // The old process's events end with it.
+            held.clear();
+            run_terminal_login(&auth).await?;
             AgentConnection::connect(profile.command.clone(), client)
                 .await
                 .with_context(|| format!("could not restart agent `{}`", profile.slug))
         }
         acp::AuthMethod::Agent(agent) => {
             eprintln!("Signing in with {}…", agent.name);
-            connection
-                .authenticate(agent.id.clone())
+            answering(connection.authenticate(agent.id.clone()), &connection, &mut events, held)
                 .await
                 .map_err(|err| anyhow::anyhow!("sign-in failed: {}", err.message))?;
             Ok((connection, events))
@@ -166,7 +251,7 @@ fn prompt_line(prompt: &str) -> anyhow::Result<String> {
 
 /// Run a terminal auth command with the user's terminal, after showing what
 /// will run and confirming sensitive environment overrides.
-pub fn run_terminal_login(auth: &TerminalAuthCommand) -> anyhow::Result<()> {
+pub async fn run_terminal_login(auth: &TerminalAuthCommand) -> anyhow::Result<()> {
     eprintln!("Running: {}", auth.command.display());
     let overlay: Vec<&(String, String)> = auth
         .command
@@ -184,7 +269,7 @@ pub fn run_terminal_login(auth: &TerminalAuthCommand) -> anyhow::Result<()> {
             bail!("sign-in cancelled");
         }
     }
-    let mut command = std::process::Command::new(&auth.command.command);
+    let mut command = tokio::process::Command::new(&auth.command.command);
     command.args(&auth.command.args);
     for name in &auth.command.env_remove {
         command.env_remove(name);
@@ -195,9 +280,19 @@ pub fn run_terminal_login(auth: &TerminalAuthCommand) -> anyhow::Result<()> {
     if let Some(cwd) = &auth.command.cwd {
         command.current_dir(cwd);
     }
-    let status = command
-        .status()
+    let mut child = command
+        .spawn()
         .with_context(|| format!("running {}", auth.command.display()))?;
+    // Ctrl+C reaches the whole foreground group: let the sign-in program
+    // handle it instead of killing acpc.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    let status = loop {
+        tokio::select! {
+            status = child.wait() => break status?,
+            _ = &mut ctrl_c => ctrl_c.set(tokio::signal::ctrl_c()),
+        }
+    };
     if !status.success() {
         bail!("sign-in command exited with {status}");
     }

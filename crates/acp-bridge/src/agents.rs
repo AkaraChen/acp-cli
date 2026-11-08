@@ -112,14 +112,26 @@ impl Agents {
     /// Forget a running agent so the next use starts a fresh process.
     /// Returns the old connection for the caller to shut down.
     pub(crate) fn restart(&mut self, slug: &str) -> Option<Arc<AgentConnection>> {
+        self.forget_prepared(slug);
         let slot = self.slots.get_mut(slug)?;
+        // A connection still being set up is already a fresh process.
+        let SlotState::Ready(_) = &slot.state else {
+            return None;
+        };
         slot.generation += 1;
         match std::mem::replace(&mut slot.state, SlotState::Idle) {
             SlotState::Ready(connection) => Some(connection),
-            other => {
-                slot.state = other;
-                None
-            }
+            _ => None,
+        }
+    }
+
+    fn forget_prepared(&mut self, slug: &str) {
+        if self
+            .prepared
+            .as_ref()
+            .is_some_and(|(prepared_slug, _, _)| prepared_slug == slug)
+        {
+            self.prepared = None;
         }
     }
 
@@ -138,6 +150,7 @@ impl Agents {
     }
 
     pub(crate) fn mark_exited(&mut self, slug: &str) {
+        self.forget_prepared(slug);
         if let Some(slot) = self.slots.get_mut(slug) {
             slot.generation += 1;
             slot.state = SlotState::Idle;
@@ -153,9 +166,12 @@ impl Agents {
                 _ => None,
             })
             .collect();
+        // In parallel: each agent gets the same grace period.
+        let mut shutdowns = tokio::task::JoinSet::new();
         for connection in connections {
-            connection.shutdown().await;
+            shutdowns.spawn(async move { connection.shutdown().await });
         }
+        while shutdowns.join_next().await.is_some() {}
     }
 }
 
