@@ -344,9 +344,9 @@ async fn ephemeral_threads_are_rejected() {
 async fn unsupported_requests_are_method_not_found() {
     let mut harness = Harness::start(HarnessConfig::default()).await;
     let error = harness
-        .request("thread/fork", json!({"threadId": "x"}))
+        .request("thread/rollback", json!({"threadId": "x", "numTurns": 1}))
         .await
-        .expect_err("fork is unsupported");
+        .expect_err("rollback is unsupported");
     assert_eq!(error["code"], -32601);
 }
 
