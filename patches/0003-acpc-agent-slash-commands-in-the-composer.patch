@@ -1,0 +1,520 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AkaraChen <akarachen@outlook.com>
+Date: Sun, 8 Nov 2026 09:30:10 +0100
+Subject: [PATCH] acpc: agent slash commands in the composer
+
+In acpc mode the slash popup lists the commands the ACP agent advertises
+(acpc/availableCommands/updated). Choosing one, or typing any name the
+TUI does not know, sends the text to the agent as a prompt. Agent
+commands replace same-named built-ins except the session lifecycle ones.
+
+Built-ins that depend on Codex's own runtime, account or services are
+hidden in acpc mode.
+---
+ codex-rs/tui/src/acpc.rs                      | 80 ++++++++++++++++++-
+ codex-rs/tui/src/bottom_pane/chat_composer.rs | 11 +++
+ .../bottom_pane/chat_composer/slash_input.rs  | 41 +++++++++-
+ codex-rs/tui/src/bottom_pane/command_popup.rs | 59 +++++++++++++-
+ codex-rs/tui/src/bottom_pane/mod.rs           |  6 ++
+ codex-rs/tui/src/chatwidget/acpc.rs           |  2 +
+ codex-rs/tui/src/chatwidget/slash_dispatch.rs | 20 ++++-
+ codex-rs/tui/src/slash_command.rs             |  3 +
+ 8 files changed, 214 insertions(+), 8 deletions(-)
+
+diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
+index a31eee4..f919f8d 100644
+--- a/codex-rs/tui/src/acpc.rs
++++ b/codex-rs/tui/src/acpc.rs
+@@ -24,10 +24,23 @@ thread_local! {
+     static TEST_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+ }
+ 
++/// Enables acpc mode on the current test thread until dropped. Test threads
++/// are reused, so the guard must outlive every assertion that needs it.
++#[cfg(test)]
++pub(crate) struct TestModeGuard(());
++
++#[cfg(test)]
++impl Drop for TestModeGuard {
++    fn drop(&mut self) {
++        TEST_ENABLED.with(|enabled| enabled.set(false));
++    }
++}
++
+ /// Tests run in parallel; enable acpc mode for the current thread only.
+ #[cfg(test)]
+-pub(crate) fn enable_for_test() {
++pub(crate) fn enable_for_test() -> TestModeGuard {
+     TEST_ENABLED.with(|enabled| enabled.set(true));
++    TestModeGuard(())
+ }
+ 
+ #[cfg(test)]
+@@ -44,3 +57,68 @@ pub(crate) struct AcpcChatState {
+     pub(crate) options: Vec<codex_app_server_protocol::AcpcSessionConfigOption>,
+     pub(crate) modes: Option<codex_app_server_protocol::AcpcSessionModes>,
+ }
++
++/// A slash command the agent advertised; running it sends `/name args` as
++/// ordinary prompt text (ACP `available_commands_update`).
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub(crate) struct AgentSlashCommand {
++    pub(crate) name: String,
++    pub(crate) description: String,
++    pub(crate) input_hint: Option<String>,
++}
++
++impl From<&codex_app_server_protocol::AcpcAvailableCommand> for AgentSlashCommand {
++    fn from(command: &codex_app_server_protocol::AcpcAvailableCommand) -> Self {
++        Self {
++            name: command.name.clone(),
++            description: command.description.clone(),
++            input_hint: command.input_hint.clone(),
++        }
++    }
++}
++
++/// Built-ins that keep working against an ACP agent. The rest depend on
++/// Codex's own runtime, accounts or services.
++pub(crate) fn builtin_allowed(command: crate::slash_command::SlashCommand) -> bool {
++    use crate::slash_command::SlashCommand;
++    matches!(
++        command,
++        SlashCommand::Model
++            | SlashCommand::Keymap
++            | SlashCommand::Vim
++            | SlashCommand::New
++            | SlashCommand::Resume
++            | SlashCommand::Copy
++            | SlashCommand::Export
++            | SlashCommand::Raw
++            | SlashCommand::Tui
++            | SlashCommand::Mention
++            | SlashCommand::Status
++            | SlashCommand::Warnings
++            | SlashCommand::Pwd
++            | SlashCommand::Title
++            | SlashCommand::Statusline
++            | SlashCommand::Theme
++            | SlashCommand::Quit
++            | SlashCommand::Exit
++            | SlashCommand::Clear
++    )
++}
++
++/// Session lifecycle commands an agent command cannot replace.
++const RESERVED_COMMANDS: &[&str] = &[
++    "quit", "exit", "new", "resume", "clear", "model", "agent", "options",
++];
++
++/// Agent commands named like a reserved built-in are not offered.
++pub(crate) fn is_reserved(name: &str) -> bool {
++    RESERVED_COMMANDS.contains(&name)
++}
++
++/// Whether `name` runs the agent's command instead of a built-in.
++pub(crate) fn agent_shadows<'a>(
++    name: &str,
++    mut agent_commands: impl Iterator<Item = &'a str>,
++) -> bool {
++    enabled() && !is_reserved(name) && agent_commands.any(|command| command == name)
++}
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+index 56d426b..530608e 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+@@ -672,6 +672,7 @@ pub(crate) struct ChatComposer {
+     token_activity_command_enabled: bool,
+     service_tier_commands_enabled: bool,
+     service_tier_commands: Vec<ServiceTierCommand>,
++    agent_commands: Vec<crate::acpc::AgentSlashCommand>,
+     mentions_v2_enabled: bool,
+     goal_command_enabled: bool,
+     voice_command_enabled: bool,
+@@ -739,6 +740,7 @@ impl ChatComposer {
+             self.draft.is_bash_mode,
+             self.builtin_command_flags(),
+             &self.service_tier_commands,
++            &self.agent_commands,
+         )
+     }
+ 
+@@ -857,6 +859,7 @@ impl ChatComposer {
+             token_activity_command_enabled: false,
+             service_tier_commands_enabled: false,
+             service_tier_commands: Vec::new(),
++            agent_commands: Vec::new(),
+             mentions_v2_enabled: false,
+             goal_command_enabled: false,
+             voice_command_enabled: false,
+@@ -1069,6 +1072,11 @@ impl ChatComposer {
+         self.update_slash_command_catalog(|composer| composer.service_tier_commands = commands);
+     }
+ 
++    /// acpc: commands advertised by the ACP agent.
++    pub(crate) fn set_agent_commands(&mut self, commands: Vec<crate::acpc::AgentSlashCommand>) {
++        self.update_slash_command_catalog(|composer| composer.agent_commands = commands);
++    }
++
+     pub fn set_goal_command_enabled(&mut self, enabled: bool) {
+         self.update_slash_command_catalog(|composer| composer.goal_command_enabled = enabled);
+     }
+@@ -9513,6 +9521,9 @@ mod tests {
+                     Some(CommandItem::ServiceTier(command)) => {
+                         panic!("expected {expected} command, got service tier {command:?}")
+                     }
++                    Some(CommandItem::Agent(command)) => {
++                        panic!("expected {expected} command, got agent command {command:?}")
++                    }
+                     None => panic!("no selected command for '{input}'"),
+                 },
+                 _ => panic!("slash popup not active after typing '{input}'"),
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs b/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
+index 066e56c..a0dd703 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
+@@ -48,6 +48,7 @@ pub(super) struct SlashInput<'a> {
+     is_bash_mode: bool,
+     command_flags: BuiltinCommandFlags,
+     service_tier_commands: &'a [ServiceTierCommand],
++    agent_commands: &'a [crate::acpc::AgentSlashCommand],
+ }
+ 
+ impl<'a> SlashInput<'a> {
+@@ -56,15 +57,21 @@ impl<'a> SlashInput<'a> {
+         is_bash_mode: bool,
+         command_flags: BuiltinCommandFlags,
+         service_tier_commands: &'a [ServiceTierCommand],
++        agent_commands: &'a [crate::acpc::AgentSlashCommand],
+     ) -> Self {
+         Self {
+             enabled,
+             is_bash_mode,
+             command_flags,
+             service_tier_commands,
++            agent_commands,
+         }
+     }
+ 
++    fn agent_command_names(&self) -> impl Iterator<Item = &str> {
++        self.agent_commands.iter().map(|command| command.name.as_str())
++    }
++
+     pub(super) fn validate_submission(
+         &self,
+         text: &str,
+@@ -79,7 +86,8 @@ impl<'a> SlashInput<'a> {
+         if input_starts_with_space || name.contains('/') {
+             return SubmissionValidation::Valid;
+         }
+-        if self.command(name).is_some() {
++        // acpc: unknown commands go to the agent as prompt text.
++        if self.command(name).is_some() || crate::acpc::enabled() {
+             SubmissionValidation::Valid
+         } else {
+             SubmissionValidation::UnknownCommand(name.to_string())
+@@ -166,6 +174,9 @@ impl<'a> SlashInput<'a> {
+         }
+ 
+         has_slash_command_prefix(name, self.command_flags, self.service_tier_commands)
++            || self
++                .agent_command_names()
++                .any(|command| codex_utils_fuzzy_match::fuzzy_match(command, name).is_some())
+     }
+ 
+     pub(super) fn command_popup(&self, filter_text: &str) -> CommandPopup {
+@@ -184,12 +195,16 @@ impl<'a> SlashInput<'a> {
+                 side_conversation_active: self.command_flags.side_conversation_active,
+             },
+             self.service_tier_commands.to_vec(),
+-        );
++        )
++        .with_agent_commands(self.agent_commands);
+         command_popup.on_composer_text_change(filter_text.to_string());
+         command_popup
+     }
+ 
+     pub(super) fn command(&self, name: &str) -> Option<SlashCommandItem> {
++        if crate::acpc::agent_shadows(name, self.agent_command_names()) {
++            return None;
++        }
+         find_slash_command(name, self.command_flags, self.service_tier_commands)
+     }
+ }
+@@ -377,6 +392,24 @@ impl ChatComposer {
+                 modifiers: KeyModifiers::NONE,
+                 ..
+             } => {
++                if let Some(CommandItem::Agent(command)) = popup.selected_item() {
++                    // acpc: agent commands are prompt text. Complete the
++                    // name; submit right away unless it takes an argument.
++                    self.popups.active = ActivePopup::None;
++                    if command.input_hint.is_some() {
++                        self.draft
++                            .textarea
++                            .set_text_clearing_elements(&format!("/{} ", command.name));
++                        self.draft
++                            .textarea
++                            .set_cursor(self.draft.textarea.text().len());
++                        return (InputResult::None, true);
++                    }
++                    self.draft
++                        .textarea
++                        .set_text_clearing_elements(&format!("/{}", command.name));
++                    return self.handle_key_event_without_popup(key_event);
++                }
+                 if let Some(sel) = popup.selected_item() {
+                     if self.blocks_direct_input {
+                         let command_is_allowed = match &sel {
+@@ -385,7 +418,7 @@ impl ChatComposer {
+                                     |(_, args, _)| parent_owned_command_is_allowed(*cmd, args),
+                                 )
+                             }
+-                            CommandItem::ServiceTier(_) => false,
++                            CommandItem::ServiceTier(_) | CommandItem::Agent(_) => false,
+                         };
+                         if !command_is_allowed {
+                             return (InputResult::ParentOwnedInputBlocked, true);
+@@ -412,6 +445,8 @@ impl ChatComposer {
+                             CommandItem::ServiceTier(command) => {
+                                 InputResult::ServiceTierCommand(command)
+                             }
++                            // Handled above.
++                            CommandItem::Agent(_) => InputResult::None,
+                         },
+                         true,
+                     );
+diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
+index 93a89e8..6162773 100644
+--- a/codex-rs/tui/src/bottom_pane/command_popup.rs
++++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
+@@ -30,6 +30,8 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
+ pub(crate) enum CommandItem {
+     Builtin(SlashCommand),
+     ServiceTier(ServiceTierCommand),
++    /// acpc: a command advertised by the ACP agent.
++    Agent(crate::acpc::AgentSlashCommand),
+ }
+ 
+ pub(crate) struct CommandPopup {
+@@ -103,6 +105,27 @@ impl CommandPopup {
+         }
+     }
+ 
++    /// acpc: add the agent's commands; they replace same-named built-ins.
++    pub(crate) fn with_agent_commands(
++        mut self,
++        agent_commands: &[crate::acpc::AgentSlashCommand],
++    ) -> Self {
++        if !crate::acpc::enabled() || agent_commands.is_empty() {
++            return self;
++        }
++        let names = || agent_commands.iter().map(|command| command.name.as_str());
++        self.commands
++            .retain(|item| !crate::acpc::agent_shadows(item.command(), names()));
++        self.commands.extend(
++            agent_commands
++                .iter()
++                .filter(|command| !crate::acpc::is_reserved(&command.name))
++                .cloned()
++                .map(CommandItem::Agent),
++        );
++        self
++    }
++
+     /// Update the filter string based on the current composer text. The text
+     /// passed in is expected to start with a leading '/'. Everything after the
+     /// *first* '/' on the *first* line becomes the active filter that is used
+@@ -292,7 +315,7 @@ impl CommandPopup {
+         self.side_conversation_active
+             && match item {
+                 CommandItem::Builtin(cmd) => !cmd.available_in_side_conversation(),
+-                CommandItem::ServiceTier(_) => true,
++                CommandItem::ServiceTier(_) | CommandItem::Agent(_) => true,
+             }
+     }
+ }
+@@ -302,6 +325,7 @@ impl CommandItem {
+         match self {
+             Self::Builtin(cmd) => cmd.command(),
+             Self::ServiceTier(command) => &command.name,
++            Self::Agent(command) => &command.name,
+         }
+     }
+ 
+@@ -309,6 +333,7 @@ impl CommandItem {
+         match self {
+             Self::Builtin(cmd) => cmd.description(),
+             Self::ServiceTier(command) => &command.description,
++            Self::Agent(command) => &command.description,
+         }
+     }
+ }
+@@ -384,6 +409,7 @@ mod tests {
+         let has_init = matches.iter().any(|item| match item {
+             CommandItem::Builtin(cmd) => cmd.command() == "init",
+             CommandItem::ServiceTier(_) => false,
++            CommandItem::Agent(_) => false,
+         });
+         assert!(
+             has_init,
+@@ -404,6 +430,7 @@ mod tests {
+             Some(CommandItem::ServiceTier(command)) => {
+                 panic!("expected init command, got service tier {command:?}")
+             }
++            Some(CommandItem::Agent(command)) => panic!("unexpected agent command {command:?}"),
+             None => panic!("expected a selected command for exact match"),
+         }
+     }
+@@ -418,6 +445,7 @@ mod tests {
+             Some(CommandItem::ServiceTier(command)) => {
+                 panic!("expected model command, got service tier {command:?}")
+             }
++            Some(CommandItem::Agent(command)) => panic!("unexpected agent command {command:?}"),
+             None => panic!("expected at least one match for '/mo'"),
+         }
+     }
+@@ -511,6 +539,7 @@ mod tests {
+             .map(|item| match item {
+                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
+                 CommandItem::ServiceTier(command) => command.name,
++                CommandItem::Agent(command) => command.name,
+             })
+             .collect();
+         assert_eq!(
+@@ -579,6 +608,7 @@ mod tests {
+             .map(|item| match item {
+                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
+                 CommandItem::ServiceTier(command) => command.name,
++                CommandItem::Agent(command) => command.name,
+             })
+             .collect();
+         assert!(
+@@ -654,6 +684,7 @@ mod tests {
+             .map(|item| match item {
+                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
+                 CommandItem::ServiceTier(command) => command.name,
++                CommandItem::Agent(command) => command.name,
+             })
+             .collect();
+         assert!(
+@@ -687,6 +718,7 @@ mod tests {
+             Some(CommandItem::ServiceTier(command)) => {
+                 panic!("expected plan command, got service tier {command:?}")
+             }
++            Some(CommandItem::Agent(command)) => panic!("unexpected agent command {command:?}"),
+             other => panic!("expected plan to be selected for exact match, got {other:?}"),
+         }
+     }
+@@ -700,6 +732,7 @@ mod tests {
+             .map(|item| match item {
+                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
+                 CommandItem::ServiceTier(command) => command.name,
++                CommandItem::Agent(command) => command.name,
+             })
+             .collect();
+ 
+@@ -708,4 +741,28 @@ mod tests {
+             "expected no /debug* command in popup menu, got {cmds:?}"
+         );
+     }
++
++    #[test]
++    fn acpc_mode_lists_agent_commands_and_hides_codex_builtins() {
++        let _acpc = crate::acpc::enable_for_test();
++        let agent = |name: &str| crate::acpc::AgentSlashCommand {
++            name: name.to_string(),
++            description: format!("agent {name}"),
++            input_hint: None,
++        };
++        let popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new())
++            .with_agent_commands(&[agent("init"), agent("model"), agent("review")]);
++        let items = popup.filtered_items();
++        let names: Vec<&str> = items.iter().map(CommandItem::command).collect();
++        assert!(items.contains(&CommandItem::Agent(agent("init"))));
++        assert!(items.contains(&CommandItem::Agent(agent("review"))));
++        // Reserved lifecycle commands stay built-in even when the agent has one.
++        assert!(items.contains(&CommandItem::Builtin(SlashCommand::Model)));
++        assert_eq!(names.iter().filter(|name| **name == "model").count(), 1);
++        assert!(names.contains(&"new"));
++        // Codex-only built-ins are gone.
++        assert!(!items.contains(&CommandItem::Builtin(SlashCommand::Permissions)));
++        assert!(!items.contains(&CommandItem::Builtin(SlashCommand::Feedback)));
++        assert!(!items.contains(&CommandItem::Builtin(SlashCommand::Init)));
++    }
+ }
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+index c1d8257..b45180c 100644
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -670,6 +670,12 @@ impl BottomPane {
+         self.request_redraw();
+     }
+ 
++    /// acpc: commands advertised by the ACP agent.
++    pub(crate) fn set_agent_commands(&mut self, commands: Vec<crate::acpc::AgentSlashCommand>) {
++        self.composer.set_agent_commands(commands);
++        self.request_redraw();
++    }
++
+     pub fn set_goal_command_enabled(&mut self, enabled: bool) {
+         self.composer.set_goal_command_enabled(enabled);
+         self.request_redraw();
+diff --git a/codex-rs/tui/src/chatwidget/acpc.rs b/codex-rs/tui/src/chatwidget/acpc.rs
+index 4952543..7cf491b 100644
+--- a/codex-rs/tui/src/chatwidget/acpc.rs
++++ b/codex-rs/tui/src/chatwidget/acpc.rs
+@@ -14,6 +14,8 @@ impl ChatWidget {
+         match notification {
+             ServerNotification::AcpcAvailableCommandsUpdated(notification) => {
+                 self.acpc.commands = notification.commands;
++                let commands = self.acpc.commands.iter().map(Into::into).collect();
++                self.bottom_pane.set_agent_commands(commands);
+             }
+             ServerNotification::AcpcSessionConfigUpdated(notification) => {
+                 self.acpc.options = notification.options;
+diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+index ee1c21b..479f167 100644
+--- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
++++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+@@ -1188,9 +1188,23 @@ impl ChatWidget {
+         }
+ 
+         let service_tier_commands = self.current_model_service_tier_commands();
+-        let Some(command) =
+-            find_slash_command(name, self.builtin_command_flags(), &service_tier_commands)
+-        else {
++        // acpc: the agent's commands (and unknown names) are prompt text.
++        let agent_command =
++            crate::acpc::agent_shadows(name, self.acpc.commands.iter().map(|c| c.name.as_str()));
++        let command = (!agent_command)
++            .then(|| find_slash_command(name, self.builtin_command_flags(), &service_tier_commands))
++            .flatten();
++        let Some(command) = command else {
++            if crate::acpc::enabled() {
++                self.submit_user_message(UserMessage {
++                    text,
++                    local_images,
++                    remote_image_urls,
++                    text_elements,
++                    mention_bindings,
++                });
++                return QueueDrain::Stop;
++            }
+             self.add_info_message(
+                 format!(
+                     r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index dd614df..18f8ae6 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -313,6 +313,9 @@ impl SlashCommand {
+     }
+ 
+     fn is_visible(self) -> bool {
++        if crate::acpc::enabled() && !crate::acpc::builtin_allowed(self) {
++            return false;
++        }
+         match self {
+             SlashCommand::Copy => !cfg!(target_os = "android"),
+             SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),

@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AkaraChen <akarachen@outlook.com>
+Date: Sun, 8 Nov 2026 09:30:10 +0100
+Subject: [PATCH] acpc: add acpc crates to the codex-rs workspace
+
+acpc keeps its own crates outside the upstream tree; they join this
+workspace so they inherit the toolchain, [patch] tables, profiles and
+lockfile.
+---
+ codex-rs/Cargo.toml | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
+index 4390ffa..5c60532 100644
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -1,5 +1,10 @@
+ [workspace]
+ members = [
++    # acpc crates live outside the upstream tree (see acpc's patches/).
++    "../../../crates/acp-client",
++    "../../../crates/acp-bridge",
++    "../../../crates/acpc",
++    "../../../crates/mock-agent",
+     "aws-auth",
+     "analytics",
+     "agent-graph-store",

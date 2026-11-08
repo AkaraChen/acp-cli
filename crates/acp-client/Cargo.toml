@@ -1,0 +1,28 @@
+[package]
+name = "acp-client"
+version = "0.1.0"
+edition.workspace = true
+license = "MIT"
+workspace = "../../third_party/codex/codex-rs"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+agent-client-protocol = "=5.0.0"
+anyhow = { workspace = true }
+futures = { workspace = true, features = ["std", "async-await"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["compat"] }
+tracing = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

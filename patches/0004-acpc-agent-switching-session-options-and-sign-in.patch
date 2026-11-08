@@ -1,0 +1,716 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AkaraChen <akarachen@outlook.com>
+Date: Sun, 8 Nov 2026 09:30:10 +0100
+Subject: [PATCH] acpc: agent switching, session options and sign-in
+
+/agent picks one of the configured ACP agents and starts a new session
+with it. /options lists the agent's session config options and modes;
+Shift+Tab cycles the mode. The switch request is not awaited on the app
+loop, so the bridge can ask the user to pick a sign-in method
+(acpc/auth/select) and run a terminal sign-in command with the TUI's
+terminal (acpc/terminal/run) while it is pending.
+---
+ codex-rs/tui/src/acpc.rs                      |  53 ++++
+ codex-rs/tui/src/app.rs                       |   1 +
+ codex-rs/tui/src/app/acpc.rs                  | 185 ++++++++++++
+ codex-rs/tui/src/app/app_server_events.rs     |   3 +
+ codex-rs/tui/src/app/event_dispatch.rs        |   3 +
+ codex-rs/tui/src/app_event.rs                 |   2 +
+ codex-rs/tui/src/chatwidget/acpc.rs           | 271 +++++++++++++++++-
+ codex-rs/tui/src/chatwidget/interaction.rs    |   8 +
+ codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
+ codex-rs/tui/src/slash_command.rs             |   9 +
+ 10 files changed, 538 insertions(+), 1 deletion(-)
+ create mode 100644 codex-rs/tui/src/app/acpc.rs
+
+diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
+index f919f8d..8fb3741 100644
+--- a/codex-rs/tui/src/acpc.rs
++++ b/codex-rs/tui/src/acpc.rs
+@@ -84,6 +84,8 @@ pub(crate) fn builtin_allowed(command: crate::slash_command::SlashCommand) -> bo
+     matches!(
+         command,
+         SlashCommand::Model
++            | SlashCommand::Agent
++            | SlashCommand::Options
+             | SlashCommand::Keymap
+             | SlashCommand::Vim
+             | SlashCommand::New
+@@ -122,3 +124,54 @@ pub(crate) fn agent_shadows<'a>(
+ ) -> bool {
+     enabled() && !is_reserved(name) && agent_commands.any(|command| command == name)
+ }
++
++/// App-level acpc actions, sent from pickers and server requests.
++#[derive(Debug)]
++pub(crate) enum AcpcAppEvent {
++    /// Switch agents (`acpc/agent/select`), then start a new session.
++    SelectAgent { slug: String },
++    SetConfigOption {
++        config_id: String,
++        value: codex_app_server_protocol::AcpcSessionConfigInput,
++    },
++    SetMode { mode_id: String },
++    /// Show the values of one select option.
++    OpenOptionValues { config_id: String },
++    OpenModes,
++    /// The user picked (or dismissed) a sign-in method.
++    AuthChosen { key: u64, method_id: Option<String> },
++    /// Run an interactive command with the terminal (`acpc/terminal/run`).
++    RunTerminal {
++        params: codex_app_server_protocol::AcpcTerminalRunParams,
++        reply: codex_app_server_client::AppServerReplyHandle,
++    },
++    Error(String),
++}
++
++static NEXT_REPLY_KEY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
++
++fn pending_replies() -> std::sync::MutexGuard<
++    'static,
++    std::collections::HashMap<u64, codex_app_server_client::AppServerReplyHandle>,
++> {
++    static REPLIES: std::sync::OnceLock<
++        std::sync::Mutex<
++            std::collections::HashMap<u64, codex_app_server_client::AppServerReplyHandle>,
++        >,
++    > = std::sync::OnceLock::new();
++    REPLIES
++        .get_or_init(Default::default)
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++}
++
++/// Keep a server-request reply until a picker answers it.
++pub(crate) fn store_reply(reply: codex_app_server_client::AppServerReplyHandle) -> u64 {
++    let key = NEXT_REPLY_KEY.fetch_add(1, Ordering::Relaxed);
++    pending_replies().insert(key, reply);
++    key
++}
++
++pub(crate) fn take_reply(key: u64) -> Option<codex_app_server_client::AppServerReplyHandle> {
++    pending_replies().remove(&key)
++}
+diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
+index 84a42c3..d9b88ce 100644
+--- a/codex-rs/tui/src/app.rs
++++ b/codex-rs/tui/src/app.rs
+@@ -198,6 +198,7 @@ use tokio_util::sync::CancellationToken;
+ use toml::Value as TomlValue;
+ use uuid::Uuid;
+ mod account_status;
++mod acpc;
+ mod agent_message_consolidation;
+ mod agent_navigation;
+ mod agent_picker;
+diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
+new file mode 100644
+index 0000000..5583d1f
+--- /dev/null
++++ b/codex-rs/tui/src/app/acpc.rs
+@@ -0,0 +1,185 @@
++//! acpc: app-level handling of ACP agent switching, session options and
++//! sign-in (see `crate::acpc`).
++
++use super::*;
++use crate::acpc::AcpcAppEvent;
++use crate::app::app_server_requests::BufferedServerRequest;
++use codex_app_server_protocol::AcpcAgentSelectParams;
++use codex_app_server_protocol::AcpcAgentSelectResponse;
++use codex_app_server_protocol::AcpcModeSetParams;
++use codex_app_server_protocol::AcpcModeSetResponse;
++use codex_app_server_protocol::AcpcSessionConfigSetParams;
++use codex_app_server_protocol::AcpcSessionConfigSetResponse;
++use codex_app_server_protocol::AcpcTerminalRunParams;
++use codex_app_server_protocol::ClientRequest;
++use codex_app_server_protocol::JSONRPCErrorError;
++use codex_app_server_protocol::ServerRequest;
++
++impl App {
++    /// Serve app-scoped acpc server requests. Returns false for others.
++    pub(super) fn handle_acpc_server_request(
++        &mut self,
++        buffered_request: &BufferedServerRequest,
++    ) -> bool {
++        match &buffered_request.request {
++            ServerRequest::AcpcAuthSelect { params, .. } => {
++                let key = crate::acpc::store_reply(buffered_request.reply.clone());
++                self.chat_widget.open_acpc_auth_picker(params, key);
++                true
++            }
++            ServerRequest::AcpcTerminalRun { params, .. } => {
++                // Needs the terminal, which only `handle_event` can lend.
++                self.app_event_tx
++                    .send(AppEvent::Acpc(AcpcAppEvent::RunTerminal {
++                        params: params.clone(),
++                        reply: buffered_request.reply.clone(),
++                    }));
++                true
++            }
++            _ => false,
++        }
++    }
++
++    pub(super) async fn handle_acpc_event(
++        &mut self,
++        tui: &mut tui::Tui,
++        app_server: &mut AppServerSession,
++        event: AcpcAppEvent,
++    ) -> Result<AppRunControl> {
++        match event {
++            AcpcAppEvent::SelectAgent { slug } => {
++                // Not awaited here: switching may need the user to sign in
++                // through acpc/auth/select and acpc/terminal/run, which this
++                // loop must stay free to serve.
++                let request = ClientRequest::AcpcAgentSelect {
++                    request_id: app_server.next_request_id(),
++                    params: AcpcAgentSelectParams { slug },
++                };
++                let handle = app_server.request_handle();
++                let tx = self.app_event_tx.clone();
++                tokio::spawn(async move {
++                    match handle.request_typed::<AcpcAgentSelectResponse>(request).await {
++                        Ok(_) => tx.send(AppEvent::NewSession { name: None }),
++                        Err(err) => tx.send(AppEvent::Acpc(AcpcAppEvent::Error(format!(
++                            "Could not switch agent: {err}"
++                        )))),
++                    }
++                });
++            }
++            AcpcAppEvent::SetConfigOption { config_id, value } => {
++                let Some(thread_id) = self.chat_widget.thread_id() else {
++                    return Ok(AppRunControl::Continue);
++                };
++                let request = ClientRequest::AcpcSessionConfigSet {
++                    request_id: app_server.next_request_id(),
++                    params: AcpcSessionConfigSetParams {
++                        thread_id: thread_id.to_string(),
++                        config_id,
++                        value,
++                    },
++                };
++                self.spawn_acpc_request::<AcpcSessionConfigSetResponse>(app_server, request);
++            }
++            AcpcAppEvent::SetMode { mode_id } => {
++                let Some(thread_id) = self.chat_widget.thread_id() else {
++                    return Ok(AppRunControl::Continue);
++                };
++                let request = ClientRequest::AcpcModeSet {
++                    request_id: app_server.next_request_id(),
++                    params: AcpcModeSetParams {
++                        thread_id: thread_id.to_string(),
++                        mode_id,
++                    },
++                };
++                self.spawn_acpc_request::<AcpcModeSetResponse>(app_server, request);
++            }
++            AcpcAppEvent::OpenOptionValues { config_id } => {
++                self.chat_widget.open_acpc_option_values(&config_id);
++            }
++            AcpcAppEvent::OpenModes => self.chat_widget.open_acpc_modes(),
++            AcpcAppEvent::AuthChosen { key, method_id } => {
++                if let Some(reply) = crate::acpc::take_reply(key) {
++                    tokio::spawn(async move {
++                        let result = serde_json::json!({ "methodId": method_id });
++                        if let Err(err) = reply.resolve(result).await {
++                            tracing::warn!("failed to answer acpc/auth/select: {err}");
++                        }
++                    });
++                }
++            }
++            AcpcAppEvent::RunTerminal { params, reply } => {
++                let exit_code = run_in_terminal(tui, &params).await;
++                tui.frame_requester().schedule_frame();
++                let response = match exit_code {
++                    Ok(exit_code) => reply.resolve(serde_json::json!({ "exitCode": exit_code })).await,
++                    Err(err) => {
++                        reply
++                            .reject(JSONRPCErrorError {
++                                code: -32603,
++                                data: None,
++                                message: format!("could not run {}: {err}", params.command),
++                            })
++                            .await
++                    }
++                };
++                if let Err(err) = response {
++                    tracing::warn!("failed to answer acpc/terminal/run: {err}");
++                }
++            }
++            AcpcAppEvent::Error(message) => self.chat_widget.add_error_message(message),
++        }
++        Ok(AppRunControl::Continue)
++    }
++
++    fn spawn_acpc_request<T>(&self, app_server: &AppServerSession, request: ClientRequest)
++    where
++        T: serde::de::DeserializeOwned + Send + 'static,
++    {
++        let handle = app_server.request_handle();
++        let tx = self.app_event_tx.clone();
++        tokio::spawn(async move {
++            if let Err(err) = handle.request_typed::<T>(request).await {
++                tx.send(AppEvent::Acpc(AcpcAppEvent::Error(format!(
++                    "The agent rejected the change: {err}"
++                ))));
++            }
++        });
++    }
++}
++
++/// Give the terminal to `params.command` until it exits (ACP terminal
++/// sign-in), then take it back.
++async fn run_in_terminal(tui: &mut tui::Tui, params: &AcpcTerminalRunParams) -> std::io::Result<Option<i32>> {
++    tui.with_restored(tui::TerminalHandoff::Restore, || async {
++        crossterm::terminal::disable_raw_mode()?;
++        // Nothing is drawn during the handoff; tell the user what runs.
++        println!("\n{}", params.title);
++        println!("$ {} {}\n", params.command, params.args.join(" "));
++        let mut command = tokio::process::Command::new(&params.command);
++        command.args(&params.args);
++        for (name, value) in &params.env {
++            match value {
++                Some(value) => command.env(name, value),
++                None => command.env_remove(name),
++            };
++        }
++        if let Some(cwd) = &params.cwd {
++            command.current_dir(cwd);
++        }
++        let mut child = command.spawn()?;
++        // Ctrl+C reaches the whole foreground group; keep it from killing
++        // the TUI while the child handles it.
++        let ctrl_c = tokio::signal::ctrl_c();
++        tokio::pin!(ctrl_c);
++        let status = loop {
++            tokio::select! {
++                status = child.wait() => break status?,
++                _ = &mut ctrl_c => {
++                    ctrl_c.set(tokio::signal::ctrl_c());
++                }
++            }
++        };
++        Ok(status.code())
++    })
++    .await
++}
+diff --git a/codex-rs/tui/src/app/app_server_events.rs b/codex-rs/tui/src/app/app_server_events.rs
+index 493628a..3bc7ed3 100644
+--- a/codex-rs/tui/src/app/app_server_events.rs
++++ b/codex-rs/tui/src/app/app_server_events.rs
+@@ -622,6 +622,9 @@ impl App {
+         app_server_client: &AppServerSession,
+         buffered_request: BufferedServerRequest,
+     ) {
++        if self.handle_acpc_server_request(&buffered_request) {
++            return;
++        }
+         let request = &buffered_request.request;
+         let thread_id = server_request_thread_id(request);
+         if thread_id
+diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
+index 3881aac..b3687df 100644
+--- a/codex-rs/tui/src/app/event_dispatch.rs
++++ b/codex-rs/tui/src/app/event_dispatch.rs
+@@ -633,6 +633,9 @@ impl App {
+             AppEvent::ResumeBackendSession(_) | AppEvent::CycleNewConversationBackend => {
+                 unreachable!("backend selection is handled by the session manager")
+             }
++            AppEvent::Acpc(event) => {
++                return self.handle_acpc_event(tui, app_server, event).await;
++            }
+             AppEvent::ArchiveCurrentThread => {
+                 return self.archive_current_thread(tui, app_server).await;
+             }
+diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
+index 07f509d..f0a625a 100644
+--- a/codex-rs/tui/src/app_event.rs
++++ b/codex-rs/tui/src/app_event.rs
+@@ -346,6 +346,8 @@ impl CapturedSideWork {
+ #[allow(clippy::large_enum_variant)]
+ #[derive(Debug, IntoStaticStr)]
+ pub(crate) enum AppEvent {
++    /// acpc: ACP agent, session option and sign-in actions (`app/acpc.rs`).
++    Acpc(crate::acpc::AcpcAppEvent),
+     AccountEmailLoaded {
+         request_id: uuid::Uuid,
+         email: Option<String>,
+diff --git a/codex-rs/tui/src/chatwidget/acpc.rs b/codex-rs/tui/src/chatwidget/acpc.rs
+index 7cf491b..1ad2441 100644
+--- a/codex-rs/tui/src/chatwidget/acpc.rs
++++ b/codex-rs/tui/src/chatwidget/acpc.rs
+@@ -1,9 +1,31 @@
+-//! acpc: chat widget handling of the `acpc/*` notifications.
++//! acpc: chat widget handling of the `acpc/*` notifications, and the agent,
++//! session option, mode and sign-in pickers.
+ 
++use codex_app_server_protocol::AcpcAuthSelectParams;
++use codex_app_server_protocol::AcpcSessionConfigInput;
++use codex_app_server_protocol::AcpcSessionConfigKind;
+ use codex_app_server_protocol::ServerNotification;
+ 
+ use super::ChatWidget;
+ use super::ReplayKind;
++use crate::acpc::AcpcAppEvent;
++use crate::app_event::AppEvent;
++use crate::bottom_pane::SelectionItem;
++use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++
++fn send(event: AcpcAppEvent) -> Box<dyn Fn(&crate::app_event_sender::AppEventSender) + Send + Sync> {
++    let event = std::sync::Mutex::new(Some(event));
++    Box::new(move |tx| {
++        if let Some(event) = event
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .take()
++        {
++            tx.send(AppEvent::Acpc(event));
++        }
++    })
++}
+ 
+ impl ChatWidget {
+     pub(super) fn on_acpc_notification(
+@@ -42,4 +64,251 @@ impl ChatWidget {
+             _ => {}
+         }
+     }
++
++    pub(crate) fn open_acpc_agent_picker(&mut self) {
++        if self.acpc.agents.is_empty() {
++            self.add_info_message("No other agents are configured.".to_string(), None);
++            return;
++        }
++        let current = self.acpc.current_agent.clone();
++        let items = self
++            .acpc
++            .agents
++            .iter()
++            .map(|agent| SelectionItem {
++                name: agent.name.clone(),
++                description: Some(agent.slug.clone()),
++                is_current: current.as_deref() == Some(agent.slug.as_str()),
++                actions: vec![send(AcpcAppEvent::SelectAgent {
++                    slug: agent.slug.clone(),
++                })],
++                dismiss_on_select: true,
++                ..Default::default()
++            })
++            .collect();
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            title: Some("Switch agent".to_string()),
++            subtitle: Some("Starts a new session with the selected agent.".to_string()),
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            ..SelectionViewParams::picker()
++        });
++        self.request_redraw();
++    }
++
++    /// Mode selector: the `mode` config option, else legacy ACP modes.
++    fn acpc_mode_option(&self) -> Option<&codex_app_server_protocol::AcpcSessionConfigOption> {
++        self.acpc.options.iter().find(|option| {
++            option.category.as_deref() == Some("mode")
++                && matches!(option.kind, AcpcSessionConfigKind::Select { .. })
++        })
++    }
++
++    pub(crate) fn open_acpc_options(&mut self) {
++        let mut items = Vec::new();
++        if let Some(modes) = &self.acpc.modes {
++            let current = modes
++                .available
++                .iter()
++                .find(|mode| mode.id == modes.current_mode_id)
++                .map_or(modes.current_mode_id.as_str(), |mode| mode.name.as_str());
++            items.push(SelectionItem {
++                name: "Mode".to_string(),
++                description: Some(current.to_string()),
++                actions: vec![send(AcpcAppEvent::OpenModes)],
++                dismiss_on_select: true,
++                ..Default::default()
++            });
++        }
++        for option in &self.acpc.options {
++            match &option.kind {
++                AcpcSessionConfigKind::Select {
++                    current_value,
++                    options,
++                } => {
++                    let current = options
++                        .iter()
++                        .find(|value| &value.value == current_value)
++                        .map_or(current_value.as_str(), |value| value.name.as_str());
++                    items.push(SelectionItem {
++                        name: option.name.clone(),
++                        description: Some(current.to_string()),
++                        selected_description: option.description.clone(),
++                        actions: vec![send(AcpcAppEvent::OpenOptionValues {
++                            config_id: option.id.clone(),
++                        })],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    });
++                }
++                AcpcSessionConfigKind::Boolean { current_value } => {
++                    items.push(SelectionItem {
++                        name: option.name.clone(),
++                        description: Some(if *current_value { "on" } else { "off" }.to_string()),
++                        selected_description: option.description.clone(),
++                        actions: vec![send(AcpcAppEvent::SetConfigOption {
++                            config_id: option.id.clone(),
++                            value: AcpcSessionConfigInput::Boolean(!current_value),
++                        })],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    });
++                }
++            }
++        }
++        if items.is_empty() {
++            self.add_info_message("The agent has no session options.".to_string(), None);
++            return;
++        }
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            title: Some("Session options".to_string()),
++            subtitle: Some("Settings the agent offers for this session.".to_string()),
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            ..SelectionViewParams::picker()
++        });
++        self.request_redraw();
++    }
++
++    pub(crate) fn open_acpc_option_values(&mut self, config_id: &str) {
++        let Some(option) = self.acpc.options.iter().find(|option| option.id == config_id) else {
++            return;
++        };
++        let AcpcSessionConfigKind::Select {
++            current_value,
++            options,
++        } = &option.kind
++        else {
++            return;
++        };
++        let items = options
++            .iter()
++            .map(|value| SelectionItem {
++                name: value.name.clone(),
++                description: value.description.clone(),
++                category_tag: value.group.clone(),
++                is_current: &value.value == current_value,
++                actions: vec![send(AcpcAppEvent::SetConfigOption {
++                    config_id: option.id.clone(),
++                    value: AcpcSessionConfigInput::Value(value.value.clone()),
++                })],
++                dismiss_on_select: true,
++                ..Default::default()
++            })
++            .collect();
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            title: Some(option.name.clone()),
++            subtitle: option.description.clone(),
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            ..SelectionViewParams::picker()
++        });
++        self.request_redraw();
++    }
++
++    pub(crate) fn open_acpc_modes(&mut self) {
++        let Some(modes) = &self.acpc.modes else {
++            return;
++        };
++        let items = modes
++            .available
++            .iter()
++            .map(|mode| SelectionItem {
++                name: mode.name.clone(),
++                description: mode.description.clone(),
++                is_current: mode.id == modes.current_mode_id,
++                actions: vec![send(AcpcAppEvent::SetMode {
++                    mode_id: mode.id.clone(),
++                })],
++                dismiss_on_select: true,
++                ..Default::default()
++            })
++            .collect();
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            title: Some("Mode".to_string()),
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            ..SelectionViewParams::picker()
++        });
++        self.request_redraw();
++    }
++
++    /// Shift+Tab: move to the agent's next mode.
++    pub(super) fn acpc_cycle_mode(&mut self) {
++        if let Some(option) = self.acpc_mode_option() {
++            let AcpcSessionConfigKind::Select {
++                current_value,
++                options,
++            } = &option.kind
++            else {
++                return;
++            };
++            let Some(index) = options.iter().position(|value| &value.value == current_value)
++            else {
++                return;
++            };
++            let next = &options[(index + 1) % options.len()];
++            let message = format!("{}: {}", option.name, next.name);
++            let event = AcpcAppEvent::SetConfigOption {
++                config_id: option.id.clone(),
++                value: AcpcSessionConfigInput::Value(next.value.clone()),
++            };
++            self.app_event_tx.send(AppEvent::Acpc(event));
++            self.add_info_message(message, None);
++            return;
++        }
++        let Some(modes) = &self.acpc.modes else {
++            return;
++        };
++        let Some(index) = modes
++            .available
++            .iter()
++            .position(|mode| mode.id == modes.current_mode_id)
++        else {
++            return;
++        };
++        let next = &modes.available[(index + 1) % modes.available.len()];
++        let message = format!("Mode: {}", next.name);
++        let event = AcpcAppEvent::SetMode {
++            mode_id: next.id.clone(),
++        };
++        self.app_event_tx.send(AppEvent::Acpc(event));
++        self.add_info_message(message, None);
++    }
++
++    /// `acpc/auth/select`: let the user choose how to sign in to an agent.
++    pub(crate) fn open_acpc_auth_picker(&mut self, params: &AcpcAuthSelectParams, key: u64) {
++        let items = params
++            .methods
++            .iter()
++            .map(|method| SelectionItem {
++                name: method.name.clone(),
++                description: method.description.clone().or_else(|| {
++                    method
++                        .terminal
++                        .then(|| "runs a sign-in command in this terminal".to_string())
++                }),
++                actions: vec![send(AcpcAppEvent::AuthChosen {
++                    key,
++                    method_id: Some(method.id.clone()),
++                })],
++                dismiss_on_select: true,
++                ..Default::default()
++            })
++            .collect();
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            title: Some(format!("Sign in to {}", params.agent_name)),
++            subtitle: Some("The agent needs you to sign in.".to_string()),
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            on_cancel: Some(Box::new(move |tx| {
++                tx.send(AppEvent::Acpc(AcpcAppEvent::AuthChosen {
++                    key,
++                    method_id: None,
++                }));
++            })),
++            ..SelectionViewParams::picker()
++        });
++        self.request_redraw();
++    }
+ }
+diff --git a/codex-rs/tui/src/chatwidget/interaction.rs b/codex-rs/tui/src/chatwidget/interaction.rs
+index 6876532..2d65dbe 100644
+--- a/codex-rs/tui/src/chatwidget/interaction.rs
++++ b/codex-rs/tui/src/chatwidget/interaction.rs
+@@ -325,6 +325,14 @@ impl ChatWidget {
+         }
+ 
+         match key_event {
++            // acpc: Shift+Tab cycles the agent's session modes.
++            KeyEvent {
++                code: KeyCode::BackTab,
++                kind: KeyEventKind::Press,
++                ..
++            } if crate::acpc::enabled() && self.bottom_pane.no_modal_or_popup_active() => {
++                self.acpc_cycle_mode();
++            }
+             KeyEvent {
+                 code: KeyCode::BackTab,
+                 kind: KeyEventKind::Press,
+diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+index 479f167..2416e3c 100644
+--- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
++++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+@@ -633,6 +633,8 @@ impl ChatWidget {
+                     );
+                 }
+             }
++            SlashCommand::Agent => self.open_acpc_agent_picker(),
++            SlashCommand::Options => self.open_acpc_options(),
+             SlashCommand::TestApproval => {
+                 use std::collections::HashMap;
+ 
+@@ -1336,7 +1338,9 @@ impl ChatWidget {
+             | SlashCommand::Rename
+             | SlashCommand::Voice
+             | SlashCommand::Recap
++            | SlashCommand::Options
+             | SlashCommand::TestApproval => QueueDrain::Continue,
++            SlashCommand::Agent => QueueDrain::Stop,
+             SlashCommand::Cd => match self.thread_id {
+                 Some(thread_id) if self.can_change_working_directory(thread_id) => QueueDrain::Stop,
+                 _ => QueueDrain::Continue,
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index 18f8ae6..342c30d 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -86,6 +86,9 @@ pub enum SlashCommand {
+     MemoryDrop,
+     #[strum(serialize = "debug-m-update")]
+     MemoryUpdate,
++    // acpc: ACP agent selection and session options.
++    Agent,
++    Options,
+ }
+ 
+ impl SlashCommand {
+@@ -157,6 +160,8 @@ impl SlashCommand {
+             SlashCommand::Logout => "log out of Codex",
+             SlashCommand::Rollout => "print the rollout file path",
+             SlashCommand::TestApproval => "test approval request",
++            SlashCommand::Agent => "switch to another agent (starts a new session)",
++            SlashCommand::Options => "change the agent's session options and mode",
+         }
+     }
+ 
+@@ -228,6 +233,7 @@ impl SlashCommand {
+         matches!(
+             self,
+             SlashCommand::New
++                | SlashCommand::Agent
+                 | SlashCommand::Clear
+                 | SlashCommand::Resume
+                 | SlashCommand::Agents
+@@ -309,6 +315,8 @@ impl SlashCommand {
+             SlashCommand::TestApproval => true,
+             SlashCommand::Agents | SlashCommand::MultiAgents => true,
+             SlashCommand::Config | SlashCommand::Theme | SlashCommand::Pets => false,
++            SlashCommand::Agent => false,
++            SlashCommand::Options => true,
+         }
+     }
+ 
+@@ -317,6 +325,7 @@ impl SlashCommand {
+             return false;
+         }
+         match self {
++            SlashCommand::Agent | SlashCommand::Options => crate::acpc::enabled(),
+             SlashCommand::Copy => !cfg!(target_os = "android"),
+             SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
+             SlashCommand::Voice => true,

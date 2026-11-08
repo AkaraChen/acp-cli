@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Materialize the pinned upstream Codex checkout in third_party/codex and
+# apply our patch series on top of it.
+#
+#   scripts/sync-upstream          fetch (if needed), reset to UPSTREAM, apply patches/*.patch
+#
+# Environment:
+#   CODEX_MIRROR   git URL or local path to fetch from (default: https://github.com/openai/codex.git)
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+rev="$(tr -d '[:space:]' < "$root/UPSTREAM")"
+dir="$root/third_party/codex"
+mirror="${CODEX_MIRROR:-https://github.com/openai/codex.git}"
+GIT_IDENTITY_NAME="${GIT_IDENTITY_NAME:-AkaraChen}"
+GIT_IDENTITY_EMAIL="${GIT_IDENTITY_EMAIL:-akarachen@outlook.com}"
+
+if [[ ! -d "$dir/.git" ]]; then
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+fi
+git -C "$dir" remote remove origin 2>/dev/null || true
+git -C "$dir" remote add origin "$mirror"
+
+if ! git -C "$dir" cat-file -e "$rev^{commit}" 2>/dev/null; then
+  echo "sync-upstream: fetching $rev from $mirror" >&2
+  git -C "$dir" fetch -q --depth 1 origin "$rev"
+fi
+
+# Drop any previous patch application. Ignored files (build output) survive.
+git -C "$dir" am --abort 2>/dev/null || true
+git -C "$dir" checkout -q --detach --force "$rev"
+git -C "$dir" clean -fdq
+
+shopt -s nullglob
+patches=("$root"/patches/*.patch)
+if (( ${#patches[@]} )); then
+  # Patch commits keep the authors recorded in the patches; the committer
+  # identity only matters inside this generated checkout.
+  git -C "$dir" -c user.name="$GIT_IDENTITY_NAME" -c user.email="$GIT_IDENTITY_EMAIL" \
+    -c commit.gpgsign=false am -q --3way --committer-date-is-author-date "${patches[@]}"
+fi
+
+# Our crates live outside codex-rs, so clippy/rustfmt/rustup would not find
+# upstream's settings on their own; mirror them at the repo root.
+for file in rust-toolchain.toml clippy.toml rustfmt.toml; do
+  cp "$dir/codex-rs/$file" "$root/$file"
+done
+
+# Our crates resolve against this lockfile; keep the committed copy authoritative.
+if [[ -f "$root/Cargo.lock" ]]; then
+  cp "$root/Cargo.lock" "$dir/codex-rs/Cargo.lock"
+fi
+
+echo "sync-upstream: $rev + ${#patches[@]} patch(es) applied" >&2

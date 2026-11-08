@@ -1,0 +1,699 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AkaraChen <akarachen@outlook.com>
+Date: Sun, 8 Nov 2026 09:30:10 +0100
+Subject: [PATCH] acpc: app-server protocol extension for ACP concepts
+
+Adds experimental acpc/* methods for ACP features the Codex app-server
+protocol has no message for: agent-advertised slash commands, session
+config options and modes, notices, the agent list, agent selection,
+sign-in method selection and an interactive terminal handoff.
+
+The TUI gains an acpc mode switch (tui/src/acpc.rs, off by default) and
+mirrors the extension state on the chat widget. Codex's own app-server
+and exec reject the new methods.
+---
+ .../src/protocol/common.rs                    |  51 ++++
+ .../src/protocol/v2/acpc.rs                   | 260 ++++++++++++++++++
+ .../src/protocol/v2/mod.rs                    |   2 +
+ codex-rs/app-server/src/message_processor.rs  |   7 +
+ codex-rs/app-server/src/notification_media.rs |   6 +-
+ codex-rs/exec/src/lib.rs                      |  10 +
+ codex-rs/tui/src/acpc.rs                      |  46 ++++
+ .../tui/src/app/app_server_event_targets.rs   |  13 +
+ codex-rs/tui/src/app/app_server_requests.rs   |  10 +
+ codex-rs/tui/src/app/side.rs                  |   1 +
+ codex-rs/tui/src/chatwidget.rs                |   2 +
+ codex-rs/tui/src/chatwidget/acpc.rs           |  43 +++
+ codex-rs/tui/src/chatwidget/constructor.rs    |   1 +
+ codex-rs/tui/src/chatwidget/protocol.rs       |   6 +
+ .../tui/src/chatwidget/protocol_requests.rs   |   2 +
+ codex-rs/tui/src/lib.rs                       |   1 +
+ 16 files changed, 460 insertions(+), 1 deletion(-)
+ create mode 100644 codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
+ create mode 100644 codex-rs/tui/src/acpc.rs
+ create mode 100644 codex-rs/tui/src/chatwidget/acpc.rs
+
+diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
+index d61e1b3..6ee1b54 100644
+--- a/codex-rs/app-server-protocol/src/protocol/common.rs
++++ b/codex-rs/app-server-protocol/src/protocol/common.rs
+@@ -1615,6 +1615,32 @@ client_request_definitions! {
+         serialization: fuzzy_session_id(params.session_id),
+         response: FuzzyFileSearchSessionStopResponse,
+     },
++
++    #[experimental("acpc/agent/list")]
++    /// acpc: agent selection and ACP session options (v2/acpc.rs).
++    AcpcAgentList => "acpc/agent/list" {
++        params: v2::AcpcAgentListParams,
++        serialization: None,
++        response: v2::AcpcAgentListResponse,
++    },
++    #[experimental("acpc/agent/select")]
++    AcpcAgentSelect => "acpc/agent/select" {
++        params: v2::AcpcAgentSelectParams,
++        serialization: None,
++        response: v2::AcpcAgentSelectResponse,
++    },
++    #[experimental("acpc/sessionConfig/set")]
++    AcpcSessionConfigSet => "acpc/sessionConfig/set" {
++        params: v2::AcpcSessionConfigSetParams,
++        serialization: thread_id(params.thread_id),
++        response: v2::AcpcSessionConfigSetResponse,
++    },
++    #[experimental("acpc/mode/set")]
++    AcpcModeSet => "acpc/mode/set" {
++        params: v2::AcpcModeSetParams,
++        serialization: thread_id(params.thread_id),
++        response: v2::AcpcModeSetResponse,
++    },
+ }
+ 
+ /// Generates an `enum ServerRequest` where each variant is a request that the
+@@ -1943,6 +1969,21 @@ server_request_definitions! {
+         response: v2::CurrentTimeReadResponse,
+     },
+ 
++    #[experimental("acpc/auth/select")]
++    /// acpc: pick an ACP sign-in method for an agent (v2/acpc.rs).
++    AcpcAuthSelect => "acpc/auth/select" {
++        params: v2::AcpcAuthSelectParams,
++        response: v2::AcpcAuthSelectResponse,
++    },
++
++    #[experimental("acpc/terminal/run")]
++    /// acpc: run an interactive command with the user's terminal (ACP
++    /// terminal auth), then hand the terminal back.
++    AcpcTerminalRun => "acpc/terminal/run" {
++        params: v2::AcpcTerminalRunParams,
++        response: v2::AcpcTerminalRunResponse,
++    },
++
+     /// DEPRECATED APIs below
+     /// Request to approve a patch.
+     /// This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).
+@@ -2164,6 +2205,16 @@ server_notification_definitions! {
+     WindowsWorldWritableWarning => "windows/worldWritableWarning" (v2::WindowsWorldWritableWarningNotification),
+     WindowsSandboxSetupCompleted => "windowsSandbox/setupCompleted" (v2::WindowsSandboxSetupCompletedNotification),
+ 
++    #[experimental("acpc/availableCommands/updated")]
++    /// acpc: ACP concepts the Codex protocol has no message for (v2/acpc.rs).
++    AcpcAvailableCommandsUpdated => "acpc/availableCommands/updated" (v2::AcpcAvailableCommandsUpdatedNotification),
++    #[experimental("acpc/sessionConfig/updated")]
++    AcpcSessionConfigUpdated => "acpc/sessionConfig/updated" (v2::AcpcSessionConfigUpdatedNotification),
++    #[experimental("acpc/notice")]
++    AcpcNotice => "acpc/notice" (v2::AcpcNoticeNotification),
++    #[experimental("acpc/agents/updated")]
++    AcpcAgentsUpdated => "acpc/agents/updated" (v2::AcpcAgentsUpdatedNotification),
++
+     #[serde(rename = "account/login/completed")]
+     #[ts(rename = "account/login/completed")]
+     #[strum(serialize = "account/login/completed")]
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
+new file mode 100644
+index 0000000..26557d2
+--- /dev/null
++++ b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
+@@ -0,0 +1,260 @@
++//! acpc extensions: ACP (Agent Client Protocol) concepts that the Codex
++//! app-server protocol has no message for. Sent by the acpc bridge; a
++//! Codex app-server never emits them.
++
++use std::collections::BTreeMap;
++
++use crate::JsonSchema;
++use serde::Deserialize;
++use serde::Serialize;
++use crate::TS;
++
++/// A command the agent advertises (ACP `available_commands_update`).
++/// Invoking it means sending `/name args` as ordinary prompt text.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAvailableCommand {
++    pub name: String,
++    pub description: String,
++    /// Placeholder shown for the command's argument, if it takes one.
++    #[serde(default)]
++    pub input_hint: Option<String>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAvailableCommandsUpdatedNotification {
++    pub thread_id: String,
++    /// The complete list; replaces any previous one.
++    pub commands: Vec<AcpcAvailableCommand>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionConfigValue {
++    pub value: String,
++    pub name: String,
++    #[serde(default)]
++    pub description: Option<String>,
++    /// Display group for grouped select options.
++    #[serde(default)]
++    pub group: Option<String>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(tag = "type", rename_all = "camelCase")]
++#[ts(tag = "type")]
++#[ts(export_to = "v2/")]
++pub enum AcpcSessionConfigKind {
++    #[serde(rename_all = "camelCase")]
++    #[ts(rename_all = "camelCase")]
++    Select {
++        current_value: String,
++        options: Vec<AcpcSessionConfigValue>,
++    },
++    #[serde(rename_all = "camelCase")]
++    #[ts(rename_all = "camelCase")]
++    Boolean { current_value: bool },
++}
++
++/// An ACP session config option, in the agent's order.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionConfigOption {
++    pub id: String,
++    pub name: String,
++    #[serde(default)]
++    pub description: Option<String>,
++    /// ACP category (`mode`, `model`, `model_config`, `thought_level`, …).
++    #[serde(default)]
++    pub category: Option<String>,
++    pub kind: AcpcSessionConfigKind,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionMode {
++    pub id: String,
++    pub name: String,
++    #[serde(default)]
++    pub description: Option<String>,
++}
++
++/// Legacy ACP session modes, sent only when the agent has no config options.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionModes {
++    pub current_mode_id: String,
++    pub available: Vec<AcpcSessionMode>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionConfigUpdatedNotification {
++    pub thread_id: String,
++    pub options: Vec<AcpcSessionConfigOption>,
++    #[serde(default)]
++    pub modes: Option<AcpcSessionModes>,
++}
++
++/// A user-facing notice from the agent (ACP `notice` session update).
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcNoticeNotification {
++    pub thread_id: Option<String>,
++    /// `info`, `warning`, `error`, or another value the agent chose.
++    pub severity: String,
++    pub title: String,
++    #[serde(default)]
++    pub description: Option<String>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAgent {
++    pub slug: String,
++    pub name: String,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAgentsUpdatedNotification {
++    pub agents: Vec<AcpcAgent>,
++    /// The agent new threads use.
++    pub current: String,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAgentListParams {}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAgentListResponse {
++    pub agents: Vec<AcpcAgent>,
++    pub current: String,
++}
++
++/// Make `slug` the agent for new threads.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAgentSelectParams {
++    pub slug: String,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAgentSelectResponse {}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(untagged)]
++#[ts(export_to = "v2/")]
++pub enum AcpcSessionConfigInput {
++    Boolean(bool),
++    Value(String),
++}
++
++/// Set an ACP session config option (`session/set_config_option`).
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionConfigSetParams {
++    pub thread_id: String,
++    pub config_id: String,
++    pub value: AcpcSessionConfigInput,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcSessionConfigSetResponse {}
++
++/// Set a legacy ACP session mode (`session/set_mode`).
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcModeSetParams {
++    pub thread_id: String,
++    pub mode_id: String,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcModeSetResponse {}
++
++/// An agent-provided permission option (ACP `PermissionOption`).
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcPermissionOption {
++    pub option_id: String,
++    pub name: String,
++    /// `allow_once`, `allow_always`, `reject_once` or `reject_always`.
++    pub kind: String,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAuthMethod {
++    pub id: String,
++    pub name: String,
++    #[serde(default)]
++    pub description: Option<String>,
++    /// The method runs an interactive command in the user's terminal.
++    pub terminal: bool,
++}
++
++/// Ask the user to pick a sign-in method for an agent.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAuthSelectParams {
++    pub agent_name: String,
++    pub methods: Vec<AcpcAuthMethod>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcAuthSelectResponse {
++    /// `None` when the user cancelled.
++    pub method_id: Option<String>,
++}
++
++/// Run an interactive command with the user's terminal (ACP terminal auth).
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcTerminalRunParams {
++    /// Shown before the command runs.
++    pub title: String,
++    pub command: String,
++    pub args: Vec<String>,
++    /// Set on the child; `None` values are removed from its environment.
++    pub env: BTreeMap<String, Option<String>>,
++    pub cwd: Option<String>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AcpcTerminalRunResponse {
++    /// Exit code, or `None` if the command could not run or was killed.
++    pub exit_code: Option<i32>,
++}
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/mod.rs b/codex-rs/app-server-protocol/src/protocol/v2/mod.rs
+index 96bb11c..7a33b98 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/mod.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/mod.rs
+@@ -1,6 +1,7 @@
+ mod shared;
+ 
+ mod account;
++mod acpc;
+ mod application;
+ mod apps;
+ mod attestation;
+@@ -45,6 +46,7 @@ mod user_verification;
+ mod windows_sandbox;
+ 
+ pub use account::*;
++pub use acpc::*;
+ pub use application::*;
+ pub use apps::*;
+ pub use attestation::*;
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index 309d579..0101982 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -1990,6 +1990,13 @@ impl MessageProcessor {
+                 .fuzzy_file_search_session_stop(params)
+                 .await
+                 .map(|response| Some(response.into())),
++            // acpc protocol extensions are served by the acpc bridge only.
++            ClientRequest::AcpcAgentList { .. }
++            | ClientRequest::AcpcAgentSelect { .. }
++            | ClientRequest::AcpcSessionConfigSet { .. }
++            | ClientRequest::AcpcModeSet { .. } => Err(method_not_found(
++                "acpc extension methods are not served by the Codex app-server",
++            )),
+             ClientRequest::OneOffCommandExec { params, .. } => {
+                 self.command_exec_processor
+                     .one_off_command_exec(&request_id, params)
+diff --git a/codex-rs/app-server/src/notification_media.rs b/codex-rs/app-server/src/notification_media.rs
+index 1e3d3d9..0627767 100644
+--- a/codex-rs/app-server/src/notification_media.rs
++++ b/codex-rs/app-server/src/notification_media.rs
+@@ -139,7 +139,11 @@ pub(crate) fn without_notification_media(notification: ServerNotification) -> Se
+         | ServerNotification::WindowsWorldWritableWarning(_)
+         | ServerNotification::WindowsSandboxSetupCompleted(_)
+         | ServerNotification::AccountLoginCompleted(_)
+-        | ServerNotification::GatewayOAuthChanged(_) => notification,
++        | ServerNotification::GatewayOAuthChanged(_)
++        | ServerNotification::AcpcAvailableCommandsUpdated(_)
++        | ServerNotification::AcpcSessionConfigUpdated(_)
++        | ServerNotification::AcpcNotice(_)
++        | ServerNotification::AcpcAgentsUpdated(_) => notification,
+     }
+ }
+ 
+diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
+index 827eb2b..f435969 100644
+--- a/codex-rs/exec/src/lib.rs
++++ b/codex-rs/exec/src/lib.rs
+@@ -2322,6 +2322,16 @@ async fn handle_server_request(
+             )
+             .await
+         }
++        ServerRequest::AcpcAuthSelect { request_id, .. }
++        | ServerRequest::AcpcTerminalRun { request_id, .. } => {
++            reject_server_request(
++                client,
++                request_id,
++                &method,
++                "acpc requests are not supported in exec mode".to_string(),
++            )
++            .await
++        }
+         ServerRequest::ApplyPatchApproval { request_id, params } => {
+             reject_server_request(
+                 client,
+diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
+new file mode 100644
+index 0000000..a31eee4
+--- /dev/null
++++ b/codex-rs/tui/src/acpc.rs
+@@ -0,0 +1,46 @@
++//! acpc: running the TUI as the front end of an ACP client.
++//!
++//! acpc (https://agentclientprotocol.com clients) drives this TUI through an
++//! app-server bridge to ACP agents. Everything acpc changes in the TUI is
++//! gated on [`enabled`], so stock Codex behaviour is untouched.
++
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
++
++static ENABLED: AtomicBool = AtomicBool::new(false);
++
++/// Turn on acpc behaviour for this process. Call before `run_main`.
++pub fn enable() {
++    ENABLED.store(true, Ordering::Relaxed);
++}
++
++#[cfg(not(test))]
++pub(crate) fn enabled() -> bool {
++    ENABLED.load(Ordering::Relaxed)
++}
++
++#[cfg(test)]
++thread_local! {
++    static TEST_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
++}
++
++/// Tests run in parallel; enable acpc mode for the current thread only.
++#[cfg(test)]
++pub(crate) fn enable_for_test() {
++    TEST_ENABLED.with(|enabled| enabled.set(true));
++}
++
++#[cfg(test)]
++pub(crate) fn enabled() -> bool {
++    ENABLED.load(Ordering::Relaxed) || TEST_ENABLED.with(std::cell::Cell::get)
++}
++
++/// ACP state mirrored from the bridge for the current session.
++#[derive(Debug, Default)]
++pub(crate) struct AcpcChatState {
++    pub(crate) agents: Vec<codex_app_server_protocol::AcpcAgent>,
++    pub(crate) current_agent: Option<String>,
++    pub(crate) commands: Vec<codex_app_server_protocol::AcpcAvailableCommand>,
++    pub(crate) options: Vec<codex_app_server_protocol::AcpcSessionConfigOption>,
++    pub(crate) modes: Option<codex_app_server_protocol::AcpcSessionModes>,
++}
+diff --git a/codex-rs/tui/src/app/app_server_event_targets.rs b/codex-rs/tui/src/app/app_server_event_targets.rs
+index 8e7b3f7..c329eb2 100644
+--- a/codex-rs/tui/src/app/app_server_event_targets.rs
++++ b/codex-rs/tui/src/app/app_server_event_targets.rs
+@@ -6,6 +6,8 @@ use codex_protocol::ThreadId;
+ 
+ pub(super) fn server_request_thread_id(request: &ServerRequest) -> Option<ThreadId> {
+     match request {
++        // acpc requests are app-scoped; see `app/acpc.rs`.
++        ServerRequest::AcpcAuthSelect { .. } | ServerRequest::AcpcTerminalRun { .. } => None,
+         ServerRequest::CommandExecutionRequestApproval { params, .. } => {
+             ThreadId::from_string(&params.thread_id).ok()
+         }
+@@ -46,6 +48,17 @@ pub(super) fn server_notification_thread_target(
+     notification: &ServerNotification,
+ ) -> ServerNotificationThreadTarget {
+     let thread_id = match notification {
++        ServerNotification::AcpcAvailableCommandsUpdated(notification) => {
++            Some(notification.thread_id.as_str())
++        }
++        ServerNotification::AcpcSessionConfigUpdated(notification) => {
++            Some(notification.thread_id.as_str())
++        }
++        ServerNotification::AcpcNotice(notification) => match notification.thread_id.as_deref() {
++            Some(thread_id) => Some(thread_id),
++            None => return ServerNotificationThreadTarget::AppScoped,
++        },
++        ServerNotification::AcpcAgentsUpdated(_) => None,
+         ServerNotification::Error(notification) => Some(notification.thread_id.as_str()),
+         ServerNotification::ThreadStarted(notification) => Some(notification.thread.id.as_str()),
+         ServerNotification::ThreadStatusChanged(notification) => {
+diff --git a/codex-rs/tui/src/app/app_server_requests.rs b/codex-rs/tui/src/app/app_server_requests.rs
+index be5c776..c9c58bd 100644
+--- a/codex-rs/tui/src/app/app_server_requests.rs
++++ b/codex-rs/tui/src/app/app_server_requests.rs
+@@ -125,6 +125,15 @@ impl PendingAppServerRequests {
+             reply: reply.clone(),
+         };
+         match request {
++            // Normally served by `app/acpc.rs` before thread routing; reject
++            // rather than drop if one gets here, so the bridge never hangs.
++            ServerRequest::AcpcAuthSelect { request_id, .. }
++            | ServerRequest::AcpcTerminalRun { request_id, .. } => {
++                Some(UnsupportedAppServerRequest {
++                    request_id: request_id.clone(),
++                    message: "acpc requests must be handled by the acpc front end".to_string(),
++                })
++            }
+             ServerRequest::CommandExecutionRequestApproval { request_id, params } => {
+                 let approval_id = params
+                     .approval_id
+@@ -485,6 +494,7 @@ impl PendingAppServerRequests {
+ 
+     fn pending_request(&self, request: &ServerRequest) -> Option<&PendingServerRequest> {
+         match request {
++            ServerRequest::AcpcAuthSelect { .. } | ServerRequest::AcpcTerminalRun { .. } => None,
+             ServerRequest::CommandExecutionRequestApproval { request_id, params } => {
+                 let approval_id = params.approval_id.as_ref().unwrap_or(&params.item_id);
+                 self.exec_approvals
+diff --git a/codex-rs/tui/src/app/side.rs b/codex-rs/tui/src/app/side.rs
+index 755d736..84266ab 100644
+--- a/codex-rs/tui/src/app/side.rs
++++ b/codex-rs/tui/src/app/side.rs
+@@ -58,6 +58,7 @@ impl SideParentStatus {
+ 
+     pub(super) fn for_request(request: &ServerRequest) -> Option<Self> {
+         match request {
++            ServerRequest::AcpcAuthSelect { .. } | ServerRequest::AcpcTerminalRun { .. } => None,
+             ServerRequest::ToolRequestUserInput { .. } => Some(SideParentStatus::NeedsInput),
+             ServerRequest::CommandExecutionRequestApproval { .. }
+             | ServerRequest::FileChangeRequestApproval { .. }
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index 31d1dc1..6bcc676 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -254,6 +254,7 @@ use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
+ use crate::status_indicator_widget::StatusDetailsCapitalization;
+ use crate::text_formatting::truncate_text;
+ use crate::tui::FrameRequester;
++mod acpc;
+ mod activity_groups;
+ mod activity_presentation;
+ mod command_lifecycle;
+@@ -808,6 +809,7 @@ pub(crate) struct ChatWidget {
+     last_rendered_user_message_display: Option<UserMessageDisplay>,
+     last_rendered_user_message_client_id: Option<String>,
+     last_non_retry_error: Option<(String, String)>,
++    acpc: crate::acpc::AcpcChatState,
+     // Keep fixture storage alive until all other widget fields have been dropped.
+     #[cfg(test)]
+     pub(crate) test_codex_home: Option<tempfile::TempDir>,
+diff --git a/codex-rs/tui/src/chatwidget/acpc.rs b/codex-rs/tui/src/chatwidget/acpc.rs
+new file mode 100644
+index 0000000..4952543
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/acpc.rs
+@@ -0,0 +1,43 @@
++//! acpc: chat widget handling of the `acpc/*` notifications.
++
++use codex_app_server_protocol::ServerNotification;
++
++use super::ChatWidget;
++use super::ReplayKind;
++
++impl ChatWidget {
++    pub(super) fn on_acpc_notification(
++        &mut self,
++        notification: ServerNotification,
++        replay_kind: Option<ReplayKind>,
++    ) {
++        match notification {
++            ServerNotification::AcpcAvailableCommandsUpdated(notification) => {
++                self.acpc.commands = notification.commands;
++            }
++            ServerNotification::AcpcSessionConfigUpdated(notification) => {
++                self.acpc.options = notification.options;
++                self.acpc.modes = notification.modes;
++            }
++            ServerNotification::AcpcAgentsUpdated(notification) => {
++                self.acpc.agents = notification.agents;
++                self.acpc.current_agent = Some(notification.current);
++            }
++            ServerNotification::AcpcNotice(notice) => {
++                if replay_kind.is_some() {
++                    return;
++                }
++                let message = match notice.description {
++                    Some(description) => format!("{}: {description}", notice.title),
++                    None => notice.title,
++                };
++                match notice.severity.as_str() {
++                    "error" => self.add_error_message(message),
++                    "warning" => self.add_warning_message(message),
++                    _ => self.add_info_message(message, /*hint*/ None),
++                }
++            }
++            _ => {}
++        }
++    }
++}
+diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
+index 9d1d4fa..d31d9ef 100644
+--- a/codex-rs/tui/src/chatwidget/constructor.rs
++++ b/codex-rs/tui/src/chatwidget/constructor.rs
+@@ -306,6 +306,7 @@ impl ChatWidget {
+             last_rendered_user_message_display: None,
+             last_rendered_user_message_client_id: None,
+             last_non_retry_error: None,
++            acpc: Default::default(),
+             #[cfg(test)]
+             test_codex_home: None,
+         };
+diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
+index 4f1746e..6517a1d 100644
+--- a/codex-rs/tui/src/chatwidget/protocol.rs
++++ b/codex-rs/tui/src/chatwidget/protocol.rs
+@@ -44,6 +44,12 @@ impl ChatWidget {
+             self.restore_retry_status_header_if_present();
+         }
+         match notification {
++            ServerNotification::AcpcAvailableCommandsUpdated(_)
++            | ServerNotification::AcpcSessionConfigUpdated(_)
++            | ServerNotification::AcpcNotice(_)
++            | ServerNotification::AcpcAgentsUpdated(_) => {
++                self.on_acpc_notification(notification, replay_kind);
++            }
+             ServerNotification::McpServerOauthLoginCompleted(notification) => {
+                 if notification.success {
+                     self.add_info_message(
+diff --git a/codex-rs/tui/src/chatwidget/protocol_requests.rs b/codex-rs/tui/src/chatwidget/protocol_requests.rs
+index e76b50b..94d8dd1 100644
+--- a/codex-rs/tui/src/chatwidget/protocol_requests.rs
++++ b/codex-rs/tui/src/chatwidget/protocol_requests.rs
+@@ -17,6 +17,8 @@ impl ChatWidget {
+ 
+         let id = request.id().to_string();
+         match request {
++            // App-scoped; served by `app/acpc.rs`.
++            ServerRequest::AcpcAuthSelect { .. } | ServerRequest::AcpcTerminalRun { .. } => {}
+             ServerRequest::CommandExecutionRequestApproval { params, .. } => {
+                 let fallback_cwd = self.config.cwd.clone();
+                 self.on_exec_approval_request(
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index 115f083..5dd2826 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -104,6 +104,7 @@ pub(crate) use codex_app_server_client::legacy_core;
+ 
+ pub(crate) use worktree_startup::ManagedTuiWorktree;
+ 
++pub mod acpc;
+ mod activation_key_guard;
+ mod additional_dirs;
+ mod analytics;

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Regenerate patches/*.patch from the commits on top of UPSTREAM in
+# third_party/codex. Edit upstream code there, commit, then run this.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+rev="$(tr -d '[:space:]' < "$root/UPSTREAM")"
+dir="$root/third_party/codex"
+
+# The lockfile is tracked separately (repo-root Cargo.lock), never in patches.
+if [[ -n "$(git -C "$dir" status --porcelain --untracked-files=no -- . ':!codex-rs/Cargo.lock')" ]]; then
+  echo "export-patches: uncommitted changes in $dir" >&2
+  exit 1
+fi
+
+rm -f "$root"/patches/*.patch
+git -C "$dir" format-patch -q --zero-commit --no-signature --no-numbered \
+  -o "$root/patches" "$rev..HEAD"
+ls "$root/patches"
