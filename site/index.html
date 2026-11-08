@@ -93,158 +93,115 @@
       </figure>
     </section>
 
-    <section class="vbg-section" aria-labelledby="codex">
-      <div class="vbg-grid">
-        <div class="vbg-span-5 vbg-flow">
-          <h2 class="vbg-heading-24" id="codex">
-            <span lang="en">Used to Codex? Keep your habits and change the agent.</span>
-            <span lang="zh-CN">用惯了 Codex？习惯不用改，换个 agent 就行。</span>
-          </h2>
-          <p>
-            <span lang="en">acpc is built from <a href="https://github.com/openai/codex">openai/codex</a> at a pinned commit plus a patch series of about 130 KB. The screen, the composer, diffs, approvals and history are Codex's own code, so the keys you know still work. Try Claude, Gemini or OpenCode one session at a time, without learning a new tool first.</span>
-            <span lang="zh-CN">acpc 基于 <a href="https://github.com/openai/codex">openai/codex</a> 的一个固定 commit 构建，上面只叠了大约 130 KB 的补丁。界面、输入框、diff、审批和历史记录都是 Codex 原本的代码，你熟悉的按键照样能用。你可以一次一个会话地试 Claude、Gemini 或 OpenCode，不用先学一个新工具。</span>
-          </p>
+    <section class="vbg-section" aria-labelledby="controls">
+      <div class="vbg-flow vbg-custom-intro">
+        <h2 class="vbg-heading-24" id="controls">
+          <span lang="en">Codex keys. Your agent's menus.</span>
+          <span lang="zh-CN">Codex 的按键，你的 agent 的菜单。</span>
+        </h2>
+        <p>
+          <span lang="en">acpc is built from <a href="https://github.com/openai/codex">openai/codex</a> at a pinned commit plus about 130 KB of patches, so the screen and the keys are Codex's own. What fills the menus comes from the agent you picked. Below is Claude, running in acpc.</span>
+          <span lang="zh-CN">acpc 基于 <a href="https://github.com/openai/codex">openai/codex</a> 的一个固定 commit 构建，上面只叠了大约 130 KB 的补丁，所以界面和按键都是 Codex 原本的。菜单里出现什么，由你选的 agent 决定。下面是 Claude 在 acpc 里的样子。</span>
+        </p>
+      </div>
+      <div class="vbg-custom-shots">
+        <div class="vbg-custom-shot">
+          <div class="vbg-flow">
+            <h3 class="vbg-heading-20"><code>/model</code></h3>
+            <p>
+              <span lang="en">Claude's models and reasoning levels, listed the way Codex lists its own.</span>
+              <span lang="zh-CN">Claude 的模型和推理强度，按 Codex 列自家模型的方式列出来。</span>
+            </p>
+          </div>
+          <div class="vbg-custom-term"><pre tabindex="0"><!-- frame:model --><span class="t-row">  <span class="t-b">Select Model and Effort</span>                                                                           </span><span class="t-row">                                                  </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-b t-r">› 1. Default (recommended) (current)  </span><span class="t-r">Opus 5.5</span><span class="t-b t-r">                                                      </span></span><span class="t-row">  2. Opus 5.5                         <span class="t-d">For complex work and everyday tasks</span>                           </span><span class="t-row">  3. Fable 5.1                        <span class="t-d">For your toughest challenges</span>                                  </span><span class="t-row">  4. Sonnet 5.5                       <span class="t-d">Most efficient for simpler tasks</span>                              </span><span class="t-row">  5. Haiku 5.5                        <span class="t-d">Fastest for quick answers</span>                                     </span><span class="t-row">  6. Haiku 4.5                        <span class="t-d">Fastest for quick answers</span>                                     </span><span class="t-row">  7. Sonnet 5                         <span class="t-d">Efficient for routine tasks</span>                                   </span><span class="t-row">  8. Opus 5                           <span class="t-d">Best for everyday, complex tasks</span>                              </span><span class="t-row"><span class="t-blue">↓</span>                                                 </span><span class="t-row">  <span class="t-b">enter</span><span class="t-d"> select · </span><span class="t-b">esc</span><span class="t-d"> back                                                                           </span></span><!-- /frame:model --></pre></div>
         </div>
-        <div class="vbg-span-7 vbg-custom-split">
+        <div class="vbg-custom-shot">
           <div class="vbg-flow">
-            <h3 class="vbg-heading-16"><span lang="en">Stays exactly like Codex</span><span lang="zh-CN">和 Codex 完全一样</span></h3>
-            <ul class="vbg-custom-list">
-              <li><span lang="en">Streaming answers and reasoning</span><span lang="zh-CN">流式输出回答和推理过程</span></li>
-              <li><span lang="en">Tool calls with diffs</span><span lang="zh-CN">带 diff 的工具调用</span></li>
-              <li><span lang="en">Approval prompts and plans</span><span lang="zh-CN">审批提示和计划</span></li>
-              <li><span lang="en">Session history and <code>/resume</code></span><span lang="zh-CN">会话历史和 <code>/resume</code></span></li>
-              <li><span lang="en">The composer and <code>/</code> popup</span><span lang="zh-CN">输入框和 <code>/</code> 弹出菜单</span></li>
-            </ul>
+            <h3 class="vbg-heading-20"><code>/</code></h3>
+            <p>
+              <span lang="en">Claude's own slash commands sit next to acpc's. Typing <code>/re</code> finds both.</span>
+              <span lang="zh-CN">Claude 自己的斜杠命令和 acpc 的命令放在一起。输入 <code>/re</code>，两边的都能搜到。</span>
+            </p>
           </div>
+          <div class="vbg-custom-term"><pre tabindex="0"><!-- frame:slash --><span class="t-row"><span class="t-b t-r">› /resume          </span><span class="t-r">resume a saved chat</span><span class="t-b t-r">                                                              </span></span><span class="t-row">  /<span class="t-b">re</span>load-plugins  <span class="t-d">Activate pending plugin changes in the current session</span>                           </span><span class="t-row">  /<span class="t-b">re</span>load-skills   <span class="t-d">Pick up skills added or changed on disk during this session</span>                      </span><span class="t-row">  /<span class="t-b">re</span>name          <span class="t-d">Rename the current conversation</span>                                                  </span><span class="t-row">  /<span class="t-b">re</span>cap           <span class="t-d">Generate a one-line session recap now</span>                                            </span><span class="t-row">  /<span class="t-b">re</span>mote-control  <span class="t-d">Continue this session from claude.ai/code or the Claude mobile app; `off`</span>        </span><span class="t-row">                   <span class="t-d">disconnects</span>                                                                      </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-b">›</span> /re                                                                                               </span><span class="t-row">                                                                                                    </span><span class="t-row">  <span class="t-yellow">Default (recommended) high</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span>                                             </span><!-- /frame:slash --></pre></div>
+        </div>
+        <div class="vbg-custom-shot">
           <div class="vbg-flow">
-            <h3 class="vbg-heading-16"><span lang="en">Comes from your agent</span><span lang="zh-CN">由你选的 agent 提供</span></h3>
-            <ul class="vbg-custom-list">
-              <li><span lang="en">Models and reasoning levels in <code>/model</code></span><span lang="zh-CN"><code>/model</code> 里的模型和推理强度</span></li>
-              <li><span lang="en">Modes on <kbd>Shift</kbd>+<kbd>Tab</kbd></span><span lang="zh-CN"><kbd>Shift</kbd>+<kbd>Tab</kbd> 切换的模式</span></li>
-              <li><span lang="en">Other settings in <code>/options</code></span><span lang="zh-CN"><code>/options</code> 里的其他设置</span></li>
-              <li><span lang="en">Its own slash commands</span><span lang="zh-CN">它自己的斜杠命令</span></li>
-              <li><span lang="en">The exact permission options it sends</span><span lang="zh-CN">它发来的权限选项，原样呈现</span></li>
-            </ul>
+            <h3 class="vbg-heading-20"><kbd>Shift</kbd>+<kbd>Tab</kbd> <span lang="en">and</span><span lang="zh-CN">和</span> <code>/options</code></h3>
+            <p>
+              <span lang="en">Claude's permission modes. Shift+Tab cycles them, <code>/options</code> lists them with the agent's other settings.</span>
+              <span lang="zh-CN">Claude 的权限模式。Shift+Tab 循环切换，<code>/options</code> 把它们和 agent 的其他设置一起列出来。</span>
+            </p>
           </div>
-          <p class="vbg-caption vbg-custom-span-all">
-            <span lang="en">Features that only make sense with Codex are hidden: cloud tasks, sandboxing, review and worktrees.</span>
-            <span lang="zh-CN">只对 Codex 自己有意义的功能被隐藏了：云端任务、沙箱、review 和 worktree。</span>
-          </p>
+          <div class="vbg-custom-term"><pre tabindex="0"><!-- frame:modes --><span class="t-row">  <span class="t-b">Mode</span>                                                                                              </span><span class="t-row">  <span class="t-d">Session permission mode</span>                                                                           </span><span class="t-row">                                                                                                    </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-b t-r">› 1. Manual (current)    </span><span class="t-r">Always ask before making changes</span><span class="t-b t-r">                                           </span></span><span class="t-row">  2. Accept edits        <span class="t-d">Automatically accept all file edits</span>                                        </span><span class="t-row">  3. Plan                <span class="t-d">Create a plan before making changes</span>                                        </span><span class="t-row">  4. Auto                <span class="t-d">Claude handles permission decisions</span>                                        </span><span class="t-row">  5. Bypass permissions  <span class="t-d">Accepts all permissions</span>                                                    </span><span class="t-row">                                                                                                    </span><span class="t-row">  <span class="t-b">enter</span><span class="t-d"> select · </span><span class="t-b">esc</span><span class="t-d"> back                                                                           </span></span><!-- /frame:modes --></pre></div>
         </div>
       </div>
     </section>
 
-    <section class="vbg-section" aria-labelledby="fork">
-      <div class="vbg-grid">
-        <div class="vbg-span-5 vbg-flow">
-          <h2 class="vbg-heading-24" id="fork">
-            <span lang="en">Switching agents doesn't mean starting over.</span>
-            <span lang="zh-CN">换 agent，不用从头再来。</span>
-          </h2>
-          <p>
-            <span lang="en">One agent is better at reading a codebase, another at the edit, a third is cheaper for the follow-up. <code>/agent</code> forks the conversation onto the agent you pick: it stays on screen, the new agent receives it as context with your next message, and the original session is untouched.</span>
-            <span lang="zh-CN">有的 agent 擅长读代码，有的擅长改代码，还有的做收尾更便宜。<code>/agent</code> 会把当前对话 fork 到你选的 agent 上：对话留在屏幕上，新 agent 在你发下一条消息时拿到全部上下文，原来的会话不受影响。</span>
-          </p>
-        </div>
-        <ol class="vbg-span-7 vbg-custom-tree" aria-label="Session tree">
-          <li>
-            <span class="vbg-mono">opencode</span>
-            <span><span lang="en">Explains <code>slugify</code></span><span lang="zh-CN">解释 <code>slugify</code></span></span>
-            <span class="vbg-meta"><span lang="en">Original session, kept as is</span><span lang="zh-CN">原会话，保持原样</span></span>
-          </li>
-          <li>
-            <span class="vbg-mono">claude</span>
-            <span><span lang="en">Forked with the full conversation, makes the edit</span><span lang="zh-CN">带着完整对话 fork 过来，负责改代码</span></span>
-            <span class="vbg-meta"><span lang="en">Shows where it came from in <code>/resume</code></span><span lang="zh-CN">在 <code>/resume</code> 里标明来源</span></span>
-          </li>
-          <li>
-            <span class="vbg-mono">gemini</span>
-            <span><span lang="en">Fork again for review, or start fresh</span><span lang="zh-CN">再 fork 一次做 review，或者重新开始</span></span>
-            <span class="vbg-meta"><span lang="en">Any agent in your config</span><span lang="zh-CN">配置里的任何 agent</span></span>
-          </li>
-        </ol>
+    <section class="vbg-section" aria-labelledby="agents">
+      <div class="vbg-flow vbg-custom-intro">
+        <h2 class="vbg-heading-24" id="agents">
+          <span lang="en">Any ACP agent is one command away.</span>
+          <span lang="zh-CN">任何 ACP agent，一条命令接入。</span>
+        </h2>
+        <p>
+          <span lang="en">acpc ships no agent and favours none. <code>acpc add</code> takes the command that starts an agent in ACP mode and writes it to <code>~/.config/acpc/config.toml</code>.</span>
+          <span lang="zh-CN">acpc 不自带 agent，也不偏向任何一家。<code>acpc add</code> 接收启动 agent ACP 模式的命令，写进 <code>~/.config/acpc/config.toml</code>。</span>
+        </p>
       </div>
-    </section>
-
-    <section class="vbg-section" aria-labelledby="acp">
-      <div class="vbg-grid">
-        <div class="vbg-span-7 vbg-flow">
-          <h2 class="vbg-heading-24" id="acp">
-            <span lang="en">A complete ACP v1 client, and nothing more.</span>
-            <span lang="zh-CN">完整的 ACP v1 客户端，仅此而已。</span>
-          </h2>
-          <p>
-            <span lang="en">Zed brings ACP agents into an editor and Toad builds a new terminal UI for them. acpc takes the Codex terminal UI as it is and gives it an ACP backend. It ships no agent and favours none: anything that speaks ACP over stdio works after one <code>acpc add</code>. If you build an agent, acpc is a strict client to test it against.</span>
-            <span lang="zh-CN">Zed 把 ACP agent 放进编辑器，Toad 为它们做了一个新的终端界面。acpc 直接用 Codex 的终端界面，给它接上 ACP 后端。acpc 不自带 agent，也不偏向任何一家：只要 agent 通过 stdio 说 ACP，一条 <code>acpc add</code> 就能用。如果你在写 agent，acpc 是一个严格的客户端，可以拿来测试。</span>
-          </p>
-        </div>
-        <div class="vbg-span-12 vbg-table-wrap">
-          <table>
-            <caption class="vbg-visually-hidden"><span lang="en">ACP v1 client features implemented by acpc</span><span lang="zh-CN">acpc 实现的 ACP v1 客户端功能</span></caption>
-            <thead>
-              <tr>
-                <th scope="col"><span lang="en">Area</span><span lang="zh-CN">范围</span></th>
-                <th scope="col"><span lang="en">What acpc does</span><span lang="zh-CN">acpc 的做法</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><th scope="row"><span lang="en">Sessions</span><span lang="zh-CN">会话</span></th><td><span class="vbg-mono">new</span>, <span class="vbg-mono">load</span>, <span class="vbg-mono">resume</span>, <span class="vbg-mono">list</span>, <span class="vbg-mono">close</span>, <span class="vbg-mono">delete</span></td></tr>
-              <tr><th scope="row"><span lang="en">Permissions</span><span lang="zh-CN">权限</span></th><td><span lang="en">Approval prompts that offer exactly the options the agent sent</span><span lang="zh-CN">审批提示只给出 agent 发来的那些选项</span></td></tr>
-              <tr><th scope="row"><span lang="en">Elicitation</span><span lang="zh-CN">Elicitation</span></th><td><span lang="en">Forms, including number and multi-select fields, or links</span><span lang="zh-CN">表单（含数字和多选字段）或链接</span></td></tr>
-              <tr><th scope="row"><span lang="en">Config and modes</span><span lang="zh-CN">配置与模式</span></th><td><span lang="en">Models in <code>/model</code>, modes on <kbd>Shift</kbd>+<kbd>Tab</kbd>, the rest in <code>/options</code></span><span lang="zh-CN">模型在 <code>/model</code>，模式用 <kbd>Shift</kbd>+<kbd>Tab</kbd>，其余在 <code>/options</code></span></td></tr>
-              <tr><th scope="row"><span lang="en">Commands</span><span lang="zh-CN">命令</span></th><td><span lang="en">The agent's available commands in the <code>/</code> popup</span><span lang="zh-CN">agent 提供的命令出现在 <code>/</code> 弹出菜单里</span></td></tr>
-              <tr><th scope="row"><span lang="en">Sign-in</span><span lang="zh-CN">登录</span></th><td><span lang="en"><code>agent</code> methods through <code>authenticate</code>, <code>terminal</code> methods by handing over the terminal</span><span lang="zh-CN"><code>agent</code> 方法走 <code>authenticate</code>，<code>terminal</code> 方法把终端交给 agent 自己的登录程序</span></td></tr>
-              <tr><th scope="row"><span lang="en">Cancellation</span><span lang="zh-CN">取消</span></th><td><span lang="en">Turns and pending requests</span><span lang="zh-CN">回合以及挂起中的请求</span></td></tr>
-              <tr><th scope="row"><span lang="en">Not advertised</span><span lang="zh-CN">不声明</span></th><td><span lang="en"><code>fs/*</code> and <code>terminal/*</code>: agents use their own file system and shell</span><span lang="zh-CN"><code>fs/*</code> 和 <code>terminal/*</code>：agent 用自己的文件系统和 shell</span></td></tr>
-            </tbody>
-          </table>
-        </div>
+      <div class="vbg-table-wrap">
+        <table>
+          <caption class="vbg-visually-hidden"><span lang="en">Commands to add common ACP agents</span><span lang="zh-CN">接入常见 ACP agent 的命令</span></caption>
+          <thead>
+            <tr>
+              <th scope="col">Agent</th>
+              <th scope="col"><span lang="en">Command</span><span lang="zh-CN">命令</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Claude</th><td class="vbg-mono">acpc add --name Claude npx -y @agentclientprotocol/claude-agent-acp@latest</td></tr>
+            <tr><th scope="row">Gemini</th><td class="vbg-mono">acpc add --name Gemini npx -y @google/gemini-cli --experimental-acp</td></tr>
+            <tr><th scope="row">OpenCode</th><td class="vbg-mono">acpc add "opencode acp"</td></tr>
+            <tr><th scope="row">Goose</th><td class="vbg-mono">acpc add "goose acp"</td></tr>
+            <tr><th scope="row"><span lang="en">Your own</span><span lang="zh-CN">你自己的</span></th><td class="vbg-mono">acpc add ./my-agent</td></tr>
+          </tbody>
+        </table>
       </div>
+      <p class="vbg-custom-aside">
+        <span lang="en">Writing an agent? acpc is a strict client to test against. It implements the client side of ACP v1: sessions (new, load, resume, list, close, delete), permission requests with the agent's own options, elicitation forms, config options and modes, available commands, sign-in and cancellation. <code>acpc app-server</code> also lets tools built to drive Codex drive your agent.</span>
+        <span lang="zh-CN">在写 agent？acpc 是一个严格的客户端，可以拿来测试。它实现了 ACP v1 的客户端部分：会话（new、load、resume、list、close、delete）、带 agent 自定义选项的权限请求、elicitation 表单、配置项和模式、可用命令、登录和取消。<code>acpc app-server</code> 还能让原本驱动 Codex 的工具来驱动你的 agent。</span>
+      </p>
     </section>
 
     <section class="vbg-section" aria-labelledby="how">
       <div class="vbg-grid">
         <div class="vbg-span-5 vbg-flow">
           <h2 class="vbg-heading-24" id="how">
-            <span lang="en">How it works</span>
-            <span lang="zh-CN">工作原理</span>
+            <span lang="en">The Codex UI, with an ACP backend.</span>
+            <span lang="zh-CN">Codex 的界面，换上 ACP 后端。</span>
           </h2>
           <p>
-            <span lang="en">The Codex TUI already talks to its backend through the app-server protocol. acpc gives it a backend that translates that protocol into ACP: a thread is an agent session, a turn is a prompt, and session updates become messages, plans, tool calls and diffs.</span>
-            <span lang="zh-CN">Codex TUI 本来就通过 app-server 协议和后端通信。acpc 给它换了一个后端，把这套协议翻译成 ACP：thread 对应 agent 会话，turn 对应一次 prompt，会话更新变成消息、计划、工具调用和 diff。</span>
+            <span lang="en">The Codex TUI already talks to its backend through the app-server protocol. acpc swaps in a backend that translates it into ACP: a thread is an agent session, a turn is a prompt, and the agent's updates become messages, plans, tool calls and diffs.</span>
+            <span lang="zh-CN">Codex TUI 本来就通过 app-server 协议和后端通信。acpc 换上一个把这套协议翻译成 ACP 的后端：thread 对应 agent 会话，turn 对应一次 prompt，agent 的更新变成消息、计划、工具调用和 diff。</span>
           </p>
           <p>
-            <span lang="en"><code>acpc app-server</code> exposes the same bridge on stdio, so tools built to drive Codex can drive any ACP agent.</span>
-            <span lang="zh-CN"><code>acpc app-server</code> 把同一个 bridge 暴露在 stdio 上，原本驱动 Codex 的工具也能驱动任何 ACP agent。</span>
+            <span lang="en">No telemetry, no local transcripts, no sandbox or shell of its own. acpc never touches your credentials.</span>
+            <span lang="zh-CN">没有遥测，不存本地记录，没有自己的沙箱和 shell。acpc 从不碰你的凭证。</span>
           </p>
         </div>
-        <ol class="vbg-span-7 vbg-custom-stack">
-          <li>
-            <span class="vbg-heading-16">Codex TUI</span>
-            <span class="vbg-meta"><span lang="en">Upstream at a pinned commit, plus <code>patches/</code></span><span lang="zh-CN">上游固定 commit，加上 <code>patches/</code></span></span>
-          </li>
-          <li class="vbg-custom-wire"><span class="vbg-mono">Codex app-server protocol</span></li>
-          <li>
-            <span class="vbg-heading-16">acp-bridge</span>
-            <span class="vbg-meta"><span lang="en">Threads, turns and items to ACP sessions and updates</span><span lang="zh-CN">thread、turn、item 与 ACP 会话和更新互相转换</span></span>
-          </li>
-          <li class="vbg-custom-wire"><span class="vbg-mono">ACP v1, JSON-RPC over stdio</span></li>
-          <li>
-            <span class="vbg-heading-16">acp-client</span>
-            <span class="vbg-meta"><span lang="en">The official Rust SDK plus client semantics</span><span lang="zh-CN">官方 Rust SDK 加上客户端语义</span></span>
-          </li>
-          <li class="vbg-custom-wire" aria-hidden="true"></li>
-          <li>
-            <span class="vbg-heading-16"><span lang="en">Your agent</span><span lang="zh-CN">你的 agent</span></span>
-            <span class="vbg-meta"><span lang="en">Any process in <code>config.toml</code></span><span lang="zh-CN"><code>config.toml</code> 里的任意进程</span></span>
-          </li>
-        </ol>
-        <dl class="vbg-span-12 vbg-custom-nots">
-          <div><dt><span lang="en">No telemetry</span><span lang="zh-CN">没有遥测</span></dt><dd><span lang="en">Nothing is sent anywhere but your agent.</span><span lang="zh-CN">除了你的 agent，什么都不发出去。</span></dd></div>
-          <div><dt><span lang="en">No local transcripts</span><span lang="zh-CN">不存本地记录</span></dt><dd><span lang="en">History comes from the agent's own <code>session/load</code>.</span><span lang="zh-CN">历史来自 agent 自己的 <code>session/load</code>。</span></dd></div>
-          <div><dt><span lang="en">No sandbox or shell</span><span lang="zh-CN">没有沙箱和 shell</span></dt><dd><span lang="en">Agents use their own tools.</span><span lang="zh-CN">agent 用它自己的工具。</span></dd></div>
-          <div><dt><span lang="en">No credentials</span><span lang="zh-CN">不碰凭证</span></dt><dd><span lang="en">Sign-in stays between you and the agent.</span><span lang="zh-CN">登录只发生在你和 agent 之间。</span></dd></div>
-        </dl>
+        <div class="vbg-span-7 vbg-custom-term vbg-custom-diagram">
+<pre tabindex="0"> Codex TUI      <span class="t-d">upstream, pinned + patches/</span>
+     │
+     │  <span class="t-d">Codex app-server protocol</span>
+     │
+ acp-bridge     <span class="t-d">threads, turns, items ⇄ ACP sessions, updates</span>
+     │
+     │  <span class="t-d">ACP v1, JSON-RPC over stdio</span>
+     │
+ acp-client     <span class="t-d">official Rust SDK + client semantics</span>
+     │
+ your agent     <span class="t-d">any process in config.toml</span></pre>
+        </div>
       </div>
     </section>
 

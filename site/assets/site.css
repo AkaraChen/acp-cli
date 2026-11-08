@@ -181,6 +181,8 @@ html[lang="zh-CN"] .vbg-report {
   white-space: pre;
   width: max-content;
   min-width: 100%;
+  border: 0;
+  background: transparent;
 }
 
 /* One terminal row; background runs fill its full height. */
@@ -223,141 +225,61 @@ html[lang="zh-CN"] .vbg-report {
 .t-red { color: var(--vbg-color-error); }
 .t-magenta { color: var(--vbg-chart-4); }
 
-/* Codex section */
+/* Sections after the hero */
 
-.vbg-custom-split {
+.vbg-custom-intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-3);
+  max-width: 44rem;
+}
+
+.vbg-custom-intro > * {
+  margin: 0;
+}
+
+.vbg-custom-shots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-10);
+  margin-top: var(--vbg-space-8);
+}
+
+.vbg-custom-shot {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   column-gap: var(--vbg-space-8);
-  row-gap: var(--vbg-space-6);
-  align-content: start;
+  row-gap: var(--vbg-space-4);
+  align-items: start;
 }
 
-.vbg-custom-split > * {
-  margin: 0;
-  min-width: 0;
-}
-
-.vbg-custom-span-all {
-  grid-column: 1 / -1;
-}
-
-.vbg-custom-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.vbg-custom-list li {
-  padding: var(--vbg-space-2) 0;
-  border-top: 1px solid var(--vbg-border-subtle);
-}
-
-/* Fork tree */
-
-.vbg-custom-tree {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.vbg-custom-shot > .vbg-flow {
   display: flex;
   flex-direction: column;
+  gap: var(--vbg-space-3);
+  max-width: 24rem;
 }
 
-.vbg-custom-tree li {
-  display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr);
-  column-gap: var(--vbg-space-4);
-  row-gap: var(--vbg-space-1);
-  padding: var(--vbg-space-4) 0 var(--vbg-space-4) var(--vbg-space-4);
-  border-left: 1px solid var(--vbg-border-default);
-  position: relative;
-}
-
-.vbg-custom-tree li:nth-child(2) {
-  margin-left: var(--vbg-space-8);
-}
-
-.vbg-custom-tree li:nth-child(3) {
-  margin-left: var(--vbg-space-16);
-}
-
-.vbg-custom-tree li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: calc(var(--vbg-space-4) + 0.7em);
-  width: calc(var(--vbg-space-4) - 4px);
-  border-top: 1px solid var(--vbg-border-default);
-}
-
-.vbg-custom-tree li > .vbg-mono {
-  grid-row: span 2;
-  font-weight: var(--vbg-weight-medium);
-}
-
-.vbg-custom-tree li > .vbg-meta {
-  margin: 0;
-  grid-column: 2;
-}
-
-/* Architecture stack */
-
-.vbg-custom-stack {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-}
-
-.vbg-custom-stack li:not(.vbg-custom-wire) {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--vbg-space-4);
-  padding: var(--vbg-space-4);
-  border: 1px solid var(--vbg-border-default);
-}
-
-.vbg-custom-stack li > * {
+.vbg-custom-shot > .vbg-flow > * {
   margin: 0;
 }
 
-.vbg-custom-stack li:not(.vbg-custom-wire) > .vbg-meta {
-  text-align: right;
+.vbg-custom-shot > .vbg-custom-term {
+  justify-self: end;
 }
 
-.vbg-custom-wire {
-  min-height: var(--vbg-space-8);
-  margin-left: var(--vbg-space-8);
-  padding: var(--vbg-space-2) 0 var(--vbg-space-2) var(--vbg-space-4);
-  border-left: 1px solid var(--vbg-border-strong);
-  color: var(--vbg-text-secondary);
-  font-size: var(--vbg-type-label);
+.vbg-section .vbg-table-wrap {
+  margin-top: var(--vbg-space-6);
 }
 
-/* What acpc doesn't do */
-
-.vbg-custom-nots {
+.vbg-custom-aside {
+  max-width: 44rem;
   margin: var(--vbg-space-6) 0 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--vbg-space-6);
-}
-
-.vbg-custom-nots > div {
-  min-width: 0;
-  padding-top: var(--vbg-space-3);
-  border-top: 1px solid var(--vbg-border-default);
-}
-
-.vbg-custom-nots dt {
-  font-weight: var(--vbg-weight-medium);
-}
-
-.vbg-custom-nots dd {
-  margin: var(--vbg-space-1) 0 0;
   color: var(--vbg-text-secondary);
+}
+
+.vbg-custom-diagram pre {
+  padding: var(--vbg-space-5);
 }
 
 /* Quick start */
@@ -403,39 +325,18 @@ html[lang="zh-CN"] .vbg-report {
   }
 }
 
-@media (max-width: 900px) {
-  .vbg-custom-nots {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 1100px) {
+  .vbg-custom-shot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vbg-custom-shot > .vbg-custom-term {
+    justify-self: start;
   }
 }
 
 @media (max-width: 600px) {
   .vbg-custom-term pre {
     font-size: 11px;
-  }
-
-  .vbg-custom-tree li {
-    grid-template-columns: 5.5rem minmax(0, 1fr);
-  }
-
-  .vbg-custom-split,
-  .vbg-custom-nots {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .vbg-custom-tree li:nth-child(2) {
-    margin-left: var(--vbg-space-4);
-  }
-
-  .vbg-custom-tree li:nth-child(3) {
-    margin-left: var(--vbg-space-8);
-  }
-
-  .vbg-custom-stack li:not(.vbg-custom-wire) {
-    flex-direction: column;
-  }
-
-  .vbg-custom-stack li:not(.vbg-custom-wire) > .vbg-meta {
-    text-align: left;
   }
 }

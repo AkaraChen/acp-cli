@@ -1,0 +1,11 @@
+[1;7m› /resume          [0;7mresume a saved chat[1m                                                              
+[0m  /[1mre[0mload-plugins  [2mActivate pending plugin changes in the current session[0m                           
+  /[1mre[0mload-skills   [2mPick up skills added or changed on disk during this session[0m                      
+  /[1mre[0mname          [2mRename the current conversation[0m                                                  
+  /[1mre[0mcap           [2mGenerate a one-line session recap now[0m                                            
+  /[1mre[0mmote-control  [2mContinue this session from claude.ai/code or the Claude mobile app; `off`[0m        
+                   [2mdisconnects[0m                                                                      
+                                                                                                    
+[1m›[0m /re                                                                                               
+                                                                                                    
+  [38;2;246;226;183mDefault (recommended) high[39m · [38;2;171;223;167m/tmp/acpc-demo/acpc-demo[39m                                             

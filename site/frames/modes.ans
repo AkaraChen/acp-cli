@@ -1,0 +1,11 @@
+  [1mMode[0m                                                                                              
+  [2mSession permission mode[0m                                                                           
+                                                                                                    
+                                                                                                    
+[1;7m› 1. Manual (current)    [0;7mAlways ask before making changes[1m                                           
+[0m  2. Accept edits        [2mAutomatically accept all file edits[0m                                        
+  3. Plan                [2mCreate a plan before making changes[0m                                        
+  4. Auto                [2mClaude handles permission decisions[0m                                        
+  5. Bypass permissions  [2mAccepts all permissions[0m                                                    
+                                                                                                    
+  [1menter[0;2m select · [0;1mesc[0;2m back                                                                           
