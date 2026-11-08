@@ -177,12 +177,12 @@
       <div class="vbg-grid">
         <div class="vbg-span-5 vbg-flow">
           <h2 class="vbg-heading-24" id="start">
-            <span lang="en">Start in three commands</span>
-            <span lang="zh-CN">三条命令开始用</span>
+            <span lang="en">Install and start</span>
+            <span lang="zh-CN">安装并开始用</span>
           </h2>
           <p>
-            <span lang="en">Add an agent and start. Install steps are in the <a href="https://github.com/AkaraChen/acpc#quick-start">README</a>.</span>
-            <span lang="zh-CN">接入一个 agent，然后启动。安装步骤见 <a href="https://github.com/AkaraChen/acpc#quick-start">README</a>。</span>
+            <span lang="en">Install the latest release for Linux or macOS, add an agent and start. On Windows, run <code>irm https://raw.githubusercontent.com/AkaraChen/acpc/main/install.ps1 | iex</code> in PowerShell. Other options are in the <a href="https://github.com/AkaraChen/acpc#install">README</a>.</span>
+            <span lang="zh-CN">安装 Linux 或 macOS 的最新版本，接入一个 agent，然后启动。Windows 上在 PowerShell 里运行 <code>irm https://raw.githubusercontent.com/AkaraChen/acpc/main/install.ps1 | iex</code>。其他方式见 <a href="https://github.com/AkaraChen/acpc#install">README</a>。</span>
           </p>
           <div class="vbg-cluster">
             <a class="vbg-button" data-variant="primary" href="https://github.com/AkaraChen/acpc">
@@ -191,7 +191,8 @@
           </div>
         </div>
         <div class="vbg-span-7 vbg-flow vbg-custom-commands">
-<pre><code>acpc add "opencode acp"
+<pre><code>curl -fsSL https://raw.githubusercontent.com/AkaraChen/acpc/main/install.sh | sh
+acpc add "opencode acp"
 acpc add --name Claude npx -y @agentclientprotocol/claude-agent-acp@latest
 acpc</code></pre>
         </div>
@@ -217,7 +218,7 @@ acpc</code></pre>
         <p class="vbg-custom-footer-head"><span lang="en">Project</span><span lang="zh-CN">项目</span></p>
         <ul>
           <li><a href="https://github.com/AkaraChen/acpc">GitHub</a></li>
-          <li><a href="https://github.com/AkaraChen/acpc#quick-start"><span lang="en">Quick start</span><span lang="zh-CN">快速开始</span></a></li>
+          <li><a href="https://github.com/AkaraChen/acpc#install"><span lang="en">Install</span><span lang="zh-CN">安装</span></a></li>
           <li><a href="https://github.com/AkaraChen/acpc#adding-agents"><span lang="en">Adding agents</span><span lang="zh-CN">接入 agent</span></a></li>
           <li><a href="https://github.com/AkaraChen/acpc/issues"><span lang="en">Report an issue</span><span lang="zh-CN">反馈问题</span></a></li>
         </ul>

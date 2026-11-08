@@ -41,7 +41,35 @@ acpc
   of its own. Agents use their own tools, and acpc never touches your
   credentials.
 
-## Quick start
+## Install
+
+On Linux and macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AkaraChen/acpc/main/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/AkaraChen/acpc/main/install.ps1 | iex
+```
+
+The script downloads the latest
+[release](https://github.com/AkaraChen/acpc/releases) for your platform,
+verifies its checksum and installs `acpc` into `~/.local/bin`
+(`%LOCALAPPDATA%\Programs\acpc` on Windows). Set `ACPC_VERSION=v0.1.0` to
+pin a release or `ACPC_INSTALL_DIR` to install elsewhere. Run it again to
+update.
+
+Then add an agent and start:
+
+```sh
+acpc add "opencode acp"
+acpc
+```
+
+## Build from source
 
 You need Rust (the toolchain installs itself from `rust-toolchain.toml`),
 `git`, a C compiler, OpenSSL headers and [just](https://github.com/casey/just).
@@ -52,16 +80,12 @@ scripts/sync-upstream          # fetch Codex at the pinned commit, apply patches
 just build                     # → target/debug/acpc
 ```
 
-Put `target/debug/acpc` on your `PATH`, add an agent, and start:
+Put `target/debug/acpc` on your `PATH`. The first build compiles the Codex
+workspace and takes a while. Install [mold](https://github.com/rui314/mold)
+and `just` links with it automatically, so later rebuilds relink in seconds.
 
-```sh
-acpc add "opencode acp"
-acpc
-```
-
-The first build compiles the Codex workspace and takes a while. Install
-[mold](https://github.com/rui314/mold) and `just` links with it
-automatically, so later rebuilds relink in seconds.
+Pushing a `v*` tag builds release archives for Linux (musl), macOS and
+Windows and publishes them on a GitHub Release.
 
 ## Adding agents
 

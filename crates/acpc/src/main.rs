@@ -30,8 +30,12 @@ use crate::config::EnvRestore;
 use crate::home::Home;
 
 /// acpc's own release version (the crate version tracks upstream Codex so
-/// the TUI sees a matching server version).
-const ACPC_VERSION: &str = "0.1.0";
+/// the TUI sees a matching server version). Release builds take it from the
+/// tag through `ACPC_RELEASE_VERSION`.
+const ACPC_VERSION: &str = match option_env!("ACPC_RELEASE_VERSION") {
+    Some(version) => version,
+    None => "0.1.0",
+};
 
 /// Stack size for threads that poll the TUI's futures (as upstream Codex).
 const THREAD_STACK_SIZE: usize = 16 * 1024 * 1024;
