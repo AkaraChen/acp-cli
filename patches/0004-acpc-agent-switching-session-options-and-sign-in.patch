@@ -190,7 +190,7 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..2329a61
+index 0000000..f12e5d1
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
 @@ -0,0 +1,282 @@
@@ -325,7 +325,7 @@ index 0000000..2329a61
 +        Ok(AppRunControl::Continue)
 +    }
 +
-+    fn switch_acpc_agent(&self, app_server: &AppServerSession, slug: String, bring_thread_id: Option<String>) {
++    fn switch_acpc_agent(&self, app_server: &mut AppServerSession, slug: String, bring_thread_id: Option<String>) {
 +        // Not awaited here: switching may need the user to sign in through
 +        // acpc/auth/select and acpc/terminal/run, which this loop must stay
 +        // free to serve.
