@@ -10,6 +10,7 @@ mod agents;
 mod approvals;
 mod content;
 mod ext;
+mod handoff;
 mod history;
 mod models;
 mod records;

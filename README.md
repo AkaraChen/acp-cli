@@ -60,7 +60,10 @@ acpc app-server          # Codex app-server protocol on stdio, backed by the age
 
 Inside the TUI:
 
-- `/agent` switches agents (starts a new session).
+- `/agent` switches agents (starts a new session). If the current session has
+  messages, acpc asks whether to bring the conversation: the new agent then
+  gets the transcript with your next message (an ACP embedded resource it
+  sees but the TUI does not show); the old session stays in `/resume`.
 - `/model` picks the agent's model and reasoning level (ACP config options).
 - `/options` shows the agent's other session options and modes.
 - Commands the agent advertises appear in the `/` popup.

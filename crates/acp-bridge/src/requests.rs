@@ -296,7 +296,7 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
             bridge.respond(conn, request_id, response);
         }
         ClientRequest::AcpcAgentSelect { request_id, params } => {
-            crate::select::select(bridge, conn, request_id, params.slug);
+            crate::select::select(bridge, conn, request_id, params.slug, params.bring_thread_id);
         }
         ClientRequest::AcpcSessionConfigSet { request_id, params } => {
             let value = match params.value {

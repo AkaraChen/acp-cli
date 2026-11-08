@@ -53,6 +53,9 @@ pub(crate) struct Agents {
     pub(crate) current: String,
     client: ClientOptions,
     prepared: Option<(String, AbsolutePathBuf, acp::NewSessionResponse)>,
+    /// (agent, thread): the next thread started on `agent` carries over
+    /// `thread`'s conversation (`/agent` → "Bring this conversation").
+    pub(crate) handoff: Option<(String, String)>,
 }
 
 impl Agents {
@@ -63,6 +66,7 @@ impl Agents {
             current: options.default_agent.clone(),
             client: options.client.clone(),
             prepared: None,
+            handoff: None,
         }
     }
 

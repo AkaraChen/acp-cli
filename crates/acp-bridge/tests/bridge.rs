@@ -642,3 +642,41 @@ async fn prompt_that_needs_sign_in_offers_it_then_works() {
     let completed = harness.next("turn/completed").await;
     assert_eq!(completed["params"]["turn"]["status"], "completed");
 }
+
+#[tokio::test]
+async fn switching_agents_can_bring_the_conversation() {
+    let mut harness = Harness::start(HarnessConfig {
+        agents: vec![
+            ("mock".to_string(), "Mock".to_string()),
+            ("other".to_string(), "Other".to_string()),
+        ],
+        ..HarnessConfig::default()
+    })
+    .await;
+    let first = harness.start_thread().await;
+    harness.send_turn(&first, "remember the word pineapple").await;
+    harness.next("turn/completed").await;
+
+    harness
+        .request("acpc/agent/select", json!({"slug": "other", "bringThreadId": first}))
+        .await
+        .expect("agent/select");
+    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    assert_eq!(started["thread"]["modelProvider"], "other");
+    let second = started["thread"]["id"].as_str().expect("id").to_string();
+    harness.send_turn(&second, "what was the word?").await;
+    let notice = harness.next("acpc/notice").await;
+    assert_eq!(notice["params"]["threadId"], second.as_str());
+    assert!(notice["params"]["title"].as_str().is_some_and(|title| title.contains("Mock")), "{notice}");
+    let completed = harness.next("turn/completed").await;
+    assert_eq!(completed["params"]["turn"]["status"], "completed");
+
+    // The new thread shows only what the user typed.
+    let read = harness
+        .request("thread/read", json!({"threadId": second, "includeTurns": true}))
+        .await
+        .expect("thread/read");
+    let user = &read["thread"]["turns"][0]["items"][0];
+    assert_eq!(user["content"].as_array().map(Vec::len), Some(1), "{user}");
+    assert_eq!(user["content"][0]["text"], "what was the word?");
+}
