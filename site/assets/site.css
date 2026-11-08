@@ -329,14 +329,27 @@ html[lang="zh-CN"] .vbg-report {
   margin-top: var(--vbg-space-16);
 }
 
+#start-band code {
+  color: var(--vbg-text-on-contrast);
+  background: var(--vbg-border-on-contrast);
+  border-color: transparent;
+}
+
 .vbg-custom-commands pre {
   margin: 0;
   padding: var(--vbg-space-5);
+  color: var(--vbg-text-on-contrast);
+  background: transparent;
   border: 1px solid var(--vbg-border-on-contrast);
   overflow-x: auto;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 13px;
   line-height: 1.6;
+}
+
+#start-band pre code {
+  background: transparent;
+  padding: 0;
 }
 
 .vbg-custom-dim {
