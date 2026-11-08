@@ -2,6 +2,7 @@
 // (same as upstream's tui/src/main.rs).
 #![recursion_limit = "256"]
 
+mod add;
 mod auth;
 mod config;
 mod home;
@@ -56,6 +57,28 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Add an agent to config.toml, e.g. `acpc add "opencode acp"`.
+    Add {
+        /// Command that starts the agent in ACP mode: one quoted string, or
+        /// its words (options for `add` go before them).
+        #[arg(
+            required = true,
+            num_args = 1..,
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            value_name = "COMMAND"
+        )]
+        command: Vec<String>,
+        /// Slug for `--agent` (default: derived from the command).
+        #[arg(long)]
+        slug: Option<String>,
+        /// Display name (default: the slug).
+        #[arg(long)]
+        name: Option<String>,
+        /// Make it the default agent.
+        #[arg(long)]
+        default: bool,
+    },
     /// Serve the Codex app-server protocol on stdin/stdout, backed by an ACP agent.
     AppServer,
     /// Sign in to the agent (runs its advertised ACP auth method), then exit.
@@ -72,6 +95,15 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Add {
+        command,
+        slug,
+        name,
+        default,
+    }) = cli.command
+    {
+        return add_agent(command, slug, name, default);
+    }
     let config = Config::load(&home::config_path())?;
     let home = Home::prepare()?;
     init_logging(&home)?;
@@ -108,6 +140,27 @@ fn main() -> anyhow::Result<()> {
         Err(panic) => std::panic::resume_unwind(panic),
     };
     std::process::exit(code);
+}
+
+fn add_agent(command: Vec<String>, slug: Option<String>, name: Option<String>, default: bool) -> anyhow::Result<()> {
+    let path = home::config_path();
+    let request = add::AddAgent {
+        command,
+        slug,
+        name,
+        make_default: default,
+    };
+    let added = add::add_agent(&path, request)?;
+    println!("Added agent `{}` to {}.", added.slug, path.display());
+    if !added.command_found {
+        println!("Note: its command was not found; install it or fix `command` there before use.");
+    }
+    if added.default.as_deref() == Some(added.slug.as_str()) {
+        println!("Start it with: acpc");
+    } else {
+        println!("Start it with: acpc -a {}", added.slug);
+    }
+    Ok(())
 }
 
 fn init_logging(home: &Home) -> anyhow::Result<()> {

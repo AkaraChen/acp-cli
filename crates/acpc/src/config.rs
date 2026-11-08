@@ -111,18 +111,13 @@ impl Config {
             }
             let bare = command.parent().is_none_or(|parent| parent.as_os_str().is_empty());
             let resolved = if bare {
-                search_path
-                    .into_iter()
-                    .flat_map(std::env::split_paths)
-                    .map(|entry| entry.join(&*command))
-                    .find(|candidate| is_executable(candidate))
-                    .with_context(|| {
-                        format!(
-                            "mcp server `{}`: `{}` not found on PATH; use an absolute path",
-                            server.name,
-                            command.display()
-                        )
-                    })?
+                find_command(command, search_path).with_context(|| {
+                    format!(
+                        "mcp server `{}`: `{}` not found on PATH; use an absolute path",
+                        server.name,
+                        command.display()
+                    )
+                })?
             } else {
                 dir.join(&*command)
             };
@@ -132,7 +127,7 @@ impl Config {
         Ok(())
     }
 
-    fn validate(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
         let mut seen = std::collections::HashSet::new();
         for agent in &self.agents {
             if agent.slug.trim().is_empty() {
@@ -260,6 +255,20 @@ impl McpServerConfig {
                 .env(env),
         )
     }
+}
+
+/// Where `command` runs from: a bare name is looked up on `search_path`,
+/// anything else is taken as a path.
+pub(crate) fn find_command(command: &Path, search_path: Option<&OsStr>) -> Option<PathBuf> {
+    let bare = command.parent().is_none_or(|parent| parent.as_os_str().is_empty());
+    if !bare {
+        return is_executable(command).then(|| command.to_path_buf());
+    }
+    search_path
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|entry| entry.join(command))
+        .find(|candidate| is_executable(candidate))
 }
 
 fn is_executable(path: &Path) -> bool {

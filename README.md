@@ -49,6 +49,7 @@ acpc has no built-in agents: anything that speaks ACP over stdio works.
 ## Use
 
 ```sh
+acpc add "opencode acp"  # add an agent to config.toml (--slug, --name, --default)
 acpc                     # new session with the default agent
 acpc -a gemini "prompt"  # pick an agent, optional first prompt
 acpc -C ~/src/project    # working directory for the session
