@@ -29,7 +29,7 @@
       <span class="vbg-identity"><a class="vbg-custom-wordmark" href="#main">acpc</a></span>
       <div class="vbg-document-meta vbg-custom-nav">
         <a href="https://github.com/AkaraChen/acpc">GitHub</a>
-        <span class="vbg-custom-lang" role="group" aria-label="Language">
+        <span class="vbg-custom-lang" id="lang" role="group" aria-label="Language">
           <button type="button" data-set-lang="en">EN</button>
           <button type="button" data-set-lang="zh-CN">中文</button>
         </span>
@@ -63,7 +63,7 @@
             <span lang="en">One conversation, two agents</span>
             <span lang="zh-CN">同一段对话，两个 agent</span>
           </p>
-          <div class="vbg-custom-steps" role="tablist" aria-labelledby="demo-title">
+          <div class="vbg-custom-steps" id="demo-steps" role="tablist" aria-labelledby="demo-title">
             <button type="button" role="tab" id="step-1" aria-controls="frame-1" aria-selected="true">
               <span class="vbg-custom-step-n">1</span>
               <span lang="en">OpenCode reads the file and explains it</span>
@@ -82,108 +82,9 @@
           </div>
         </div>
         <div class="vbg-custom-term">
-          <pre id="frame-1" role="tabpanel" aria-labelledby="step-1" tabindex="0"><!-- frame:1 -->
-  <span class="t-blue">&gt;_ </span><span class="t-b">acpc</span>
-     <span class="t-d">/tmp/acpc-demo/acpc-demo</span>
-<span class="t-d">  permissions: </span><span class="t-b t-magenta">YOLO mode</span>
-
-<span class="t-bg"> </span>
-<span class="t-b t-d t-bg">› </span><span class="t-bg">What does slugify in src/slug.ts do? Two sentences.</span>
-<span class="t-bg"> </span>
-
-<span class="t-green">•</span> <span class="t-b">Called</span> <span class="t-blue">src/slug.ts</span><span class="t-d"> · 189ms</span>
-<span class="t-d">  … 3 earlier lines hidden</span>
-<span class="t-d">  └     .replace(/[^a-z0-9]+/g, "-")</span>
-<span class="t-d">        .replace(/^-|-$/g, "");</span>
-<span class="t-d">    }</span>
-<span class="t-d">    + Show details</span>
-
-<span class="t-d">• </span>It converts a title into a URL-friendly slug by lowercasing it, replacing any run of non-
-  alphanumeric characters with a hyphen, and trimming leading/trailing hyphens. For example, <span class="t-green">"Hello</span>
-  <span class="t-green">World!"</span> becomes <span class="t-green">"hello-world"</span>.
-
-<span class="t-d">  Worked for 3s • 2:58 PM</span>
-
-
-
-
-
-
-
-
-
-<span class="t-b">›</span> <span class="t-d">Ask the agent anything</span>
-
-  <span class="t-yellow">opencode-go/glm-5.3 low</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span>
-  <span class="t-b">←</span> for agents · <span class="t-b">?</span> for shortcuts<!-- /frame:1 --></pre>
-          <pre id="frame-2" role="tabpanel" aria-labelledby="step-2" tabindex="0"><!-- frame:2 -->
-  <span class="t-blue">&gt;_ </span><span class="t-b">acpc</span>
-     <span class="t-d">/tmp/acpc-demo/acpc-demo</span>
-<span class="t-d">  permissions: </span><span class="t-b t-magenta">YOLO mode</span>
-
-<span class="t-bg"> </span>
-<span class="t-b t-d t-bg">› </span><span class="t-bg">What does slugify in src/slug.ts do? Two sentences.</span>
-<span class="t-bg"> </span>
-
-<span class="t-green">•</span> <span class="t-b">Called</span> <span class="t-blue">src/slug.ts</span><span class="t-d"> · 189ms</span>
-<span class="t-d">  … 3 earlier lines hidden</span>
-<span class="t-d">  └     .replace(/[^a-z0-9]+/g, "-")</span>
-<span class="t-d">        .replace(/^-|-$/g, "");</span>
-<span class="t-d">    }</span>
-<span class="t-d">    + Show details</span>
-
-<span class="t-d">• </span>It converts a title into a URL-friendly slug by lowercasing it, replacing any run of non-
-  alphanumeric characters with a hyphen, and trimming leading/trailing hyphens. For example, <span class="t-green">"Hello</span>
-  <span class="t-green">World!"</span> becomes <span class="t-green">"hello-world"</span>.
-
-<span class="t-d">  Worked for 3s • 2:58 PM</span>
-
-
-
-
-
-  <span class="t-b">Switch to Claude</span>
-  <span class="t-d">Bring the current conversation along?</span>
-
-
-<span class="t-b t-r">› 1. Bring this conversation  </span><span class="t-r">Fork it to Claude, which gets it with your next message</span>
-  2. Start fresh              <span class="t-d">This conversation stays available in /resume</span>
-
-  <span class="t-b">enter</span><span class="t-d"> select · </span><span class="t-b">esc</span><span class="t-d"> back</span><!-- /frame:2 --></pre>
-          <pre id="frame-3" role="tabpanel" aria-labelledby="step-3" tabindex="0"><!-- frame:3 --><span class="t-b t-d t-bg">› </span><span class="t-bg">What</span><span class="t-bg"> </span><span class="t-bg">does</span><span class="t-bg"> </span><span class="t-bg">slugify</span><span class="t-bg"> </span><span class="t-bg">in</span><span class="t-bg"> </span><span class="t-bg">src/slug.ts</span><span class="t-bg"> </span><span class="t-bg">do?</span><span class="t-bg"> </span><span class="t-bg">Two</span><span class="t-bg"> </span><span class="t-bg">sentences.</span>
-  alphanumeric characters with a hyphen, and trimming leading/trailing hyphens. For example, <span class="t-green">"Hello</span>
-  <span class="t-green">World!"</span> becomes <span class="t-green">"hello-world"</span>.
-
-<span class="t-d">  Worked for 3s • 2:58 PM</span>
-
-<span class="t-d">• </span>Fork created. You can continue here.
-
-<span class="t-bg"> </span>
-<span class="t-b t-d t-bg">› </span><span class="t-bg">Keep accented letters instead of dropping them, so Café becomes cafe. Make the edit, then reply</span>
-<span class="t-bg"> </span><span class="t-bg"> </span><span class="t-bg">in</span><span class="t-bg"> </span><span class="t-bg">one</span><span class="t-bg"> </span><span class="t-bg">short</span><span class="t-bg"> </span><span class="t-bg">sentence.</span>
-<span class="t-bg"> </span>
-
-<span class="t-b t-green">•</span> <span class="t-b">Ran</span> <span class="t-blue">Terminal</span>
-<span class="t-d">  └     .replace(/^-|-$/g, "");</span>
-<span class="t-d">    }</span>
-<span class="t-d">    ```</span>
-<span class="t-d">    + 5 lines (^t to expand)</span>
-
-<span class="t-b t-green">•</span> <span class="t-b">Ran</span> <span class="t-blue">Terminal</span>
-<span class="t-d">  └ ```console</span>
-<span class="t-d">    cafe-au-lait hello-world</span>
-<span class="t-d">    ```</span>
-
-<span class="t-d">• </span><span class="t-green">slugify</span> in <span class="t-green">src/slug.ts</span> now strips accents before building the slug, so "Café" becomes "cafe" (a
-  quick test turned "Café au Lait!" into <span class="t-green">cafe-au-lait</span>).
-
-<span class="t-d">  Worked for 9s • 2:58 PM</span>
-
-
-<span class="t-b">›</span> <span class="t-d">Ask the agent anything</span>
-
-  <span class="t-yellow">default high</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span> · <span class="t-cyan">Slugify accent handling in src/slug.ts</span>
-  <span class="t-b">←</span> for agents · <span class="t-b">?</span> for shortcuts<!-- /frame:3 --></pre>
+          <pre id="frame-1" role="tabpanel" aria-labelledby="step-1" tabindex="0"><!-- frame:1 --><span class="t-row">                         </span><span class="t-row">  <span class="t-blue">&gt;_ </span><span class="t-b">acpc</span>                </span><span class="t-row">     <span class="t-d">/tmp/acpc-demo/acpc-demo</span>                     </span><span class="t-row"><span class="t-d">  permissions: </span><span class="t-b t-magenta">YOLO mode</span> </span><span class="t-row">                         </span><span class="t-row"><span class="t-bg"> </span><span class="t-bg">                                                                                                   </span></span><span class="t-row"><span class="t-b t-d t-bg">› </span><span class="t-bg">What does slugify in src/slug.ts do? Two sentences.</span><span class="t-bg">                                               </span></span><span class="t-row"><span class="t-bg"> </span><span class="t-bg">                                                                                                   </span></span><span class="t-row">                         </span><span class="t-row"><span class="t-green">•</span> <span class="t-b">Called</span> <span class="t-blue">src/slug.ts</span><span class="t-d"> · 46ms</span>                       </span><span class="t-row"><span class="t-d">  … 3 earlier lines hidden</span>                                                                          </span><span class="t-row"><span class="t-d">  └     .replace(/[^a-z0-9]+/g, "-")                                                                </span></span><span class="t-row"><span class="t-d">        .replace(/^-|-$/g, "");                                                                     </span></span><span class="t-row"><span class="t-d">    }                                                                                               </span></span><span class="t-row"><span class="t-d">    + Show details                                                                                  </span></span><span class="t-row">                         </span><span class="t-row"><span class="t-d">• </span>It converts a title to a URL-friendly slug: lowercasing it, replacing any run of non-alphanumeric </span><span class="t-row">  characters with a hyphen, then trimming leading/trailing hyphens. E.g. <span class="t-green">"Hello World!"</span> becomes     </span><span class="t-row">  <span class="t-green">"hello-world"</span>.         </span><span class="t-row">                         </span><span class="t-row"><span class="t-d">  Worked for 4s • 3:16 PM                                                                           </span></span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                                                  </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row"><span class="t-b">›</span> <span class="t-d">Ask the agent anything</span>                                                                            </span><span class="t-row">                         </span><span class="t-row">  <span class="t-yellow">opencode-go/glm-5.3 low</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span>                                                </span><span class="t-row">  <span class="t-b">←</span> for agents · <span class="t-b">?</span> for shortcuts                  </span><!-- /frame:1 --></pre>
+          <pre id="frame-2" role="tabpanel" aria-labelledby="step-2" tabindex="0"><!-- frame:2 --><span class="t-row">                         </span><span class="t-row">  <span class="t-blue">&gt;_ </span><span class="t-b">acpc</span>                </span><span class="t-row">     <span class="t-d">/tmp/acpc-demo/acpc-demo</span>                     </span><span class="t-row"><span class="t-d">  permissions: </span><span class="t-b t-magenta">YOLO mode</span> </span><span class="t-row">                         </span><span class="t-row"><span class="t-bg"> </span><span class="t-bg">                                                                                                   </span></span><span class="t-row"><span class="t-b t-d t-bg">› </span><span class="t-bg">What does slugify in src/slug.ts do? Two sentences.</span><span class="t-bg">                                               </span></span><span class="t-row"><span class="t-bg"> </span><span class="t-bg">                                                                                                   </span></span><span class="t-row">                         </span><span class="t-row"><span class="t-green">•</span> <span class="t-b">Called</span> <span class="t-blue">src/slug.ts</span><span class="t-d"> · 46ms</span>                       </span><span class="t-row"><span class="t-d">  … 3 earlier lines hidden</span>                                                                          </span><span class="t-row"><span class="t-d">  └     .replace(/[^a-z0-9]+/g, "-")                                                                </span></span><span class="t-row"><span class="t-d">        .replace(/^-|-$/g, "");                                                                     </span></span><span class="t-row"><span class="t-d">    }                                                                                               </span></span><span class="t-row"><span class="t-d">    + Show details                                                                                  </span></span><span class="t-row">                         </span><span class="t-row"><span class="t-d">• </span>It converts a title to a URL-friendly slug: lowercasing it, replacing any run of non-alphanumeric </span><span class="t-row">  characters with a hyphen, then trimming leading/trailing hyphens. E.g. <span class="t-green">"Hello World!"</span> becomes     </span><span class="t-row">  <span class="t-green">"hello-world"</span>.         </span><span class="t-row">                         </span><span class="t-row"><span class="t-d">  Worked for 4s • 3:16 PM                                                                           </span></span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">                         </span><span class="t-row">  <span class="t-b">Switch to Claude</span>       </span><span class="t-row">  <span class="t-d">Bring the current conversation along?</span>           </span><span class="t-row">                                                                                                    </span><span class="t-row">                         </span><span class="t-row"><span class="t-b t-r">› 1. Bring this conversation  </span><span class="t-r">Fork it to Claude, which gets it with your next message</span><span class="t-b t-r">               </span></span><span class="t-row">  2. Start fresh              <span class="t-d">This conversation stays available in /resume</span>                          </span><span class="t-row">                                                                                                    </span><span class="t-row">  <span class="t-b">enter</span><span class="t-d"> select · </span><span class="t-b">esc</span><span class="t-d"> back                                                                           </span></span><!-- /frame:2 --></pre>
+          <pre id="frame-3" role="tabpanel" aria-labelledby="step-3" tabindex="0"><!-- frame:3 --><span class="t-row"><span class="t-b t-d t-bg">› </span><span class="t-bg">What</span><span class="t-bg"> </span><span class="t-bg">does</span><span class="t-bg"> </span><span class="t-bg">slugify</span><span class="t-bg"> </span><span class="t-bg">in</span><span class="t-bg"> </span><span class="t-bg">src/slug.ts</span><span class="t-bg"> </span><span class="t-bg">do?</span><span class="t-bg"> </span><span class="t-bg">Two</span><span class="t-bg"> </span><span class="t-bg">sentences.</span><span class="t-bg">                                               </span></span><span class="t-row"><span class="t-d">  Worked for 4s • 3:16 PM                                                                           </span></span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-d">• </span>Fork created. You can continue here.                                                              </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-bg"> </span><span class="t-bg">                                                                                                   </span></span><span class="t-row"><span class="t-b t-d t-bg">› </span><span class="t-bg">Keep accented letters instead of dropping them, so Café becomes cafe. Make the edit, then reply</span><span class="t-bg">   </span></span><span class="t-row"><span class="t-bg"> </span><span class="t-bg"> </span><span class="t-bg">in</span><span class="t-bg"> </span><span class="t-bg">one</span><span class="t-bg"> </span><span class="t-bg">short</span><span class="t-bg"> </span><span class="t-bg">sentence.</span><span class="t-bg">                                                                            </span></span><span class="t-row"><span class="t-bg"> </span><span class="t-bg">                                                                                                   </span></span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-b t-green">•</span> <span class="t-b">Ran</span> <span class="t-blue">Terminal</span>                                                                                      </span><span class="t-row"><span class="t-d">  └     .replace(/^-|-$/g, "");</span>                                                                     </span><span class="t-row"><span class="t-d">    }</span>                                                                                               </span><span class="t-row"><span class="t-d">    ```</span>                                                                                             </span><span class="t-row"><span class="t-d">    + 5 lines (^t to expand)                                                                        </span></span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-d">• </span><span class="t-b">Edited</span> 0 files (<span class="t-green">+0</span> <span class="t-red">-0</span>)                                                                            </span><span class="t-row"><span class="t-d">    + Show details                                                                                  </span></span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-b t-green">•</span> <span class="t-b">Ran</span> <span class="t-blue">Terminal</span>                                                                                      </span><span class="t-row"><span class="t-d">  └ ```console</span>                                                                                      </span><span class="t-row"><span class="t-d">    cafe creme-brulee</span>                                                                               </span><span class="t-row"><span class="t-d">    ```</span>                                                                                             </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-d">• </span>I updated <span class="t-green">slugify</span> in <span class="t-green">src/slug.ts</span> to strip accent marks before slugging, and a quick test turned   </span><span class="t-row">  "Café" into <span class="t-green">cafe</span> and "Crème Brûlée!" into <span class="t-green">creme-brulee</span>.                                           </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-d">  Worked for 8s • 3:16 PM                                                                           </span></span><span class="t-row">                         </span><span class="t-row">                                                                                                    </span><span class="t-row"><span class="t-b">›</span> <span class="t-d">Ask the agent anything</span> </span><span class="t-row">                         </span><span class="t-row">  <span class="t-yellow">default high</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span> · <span class="t-yellow">Slugify accent handling in src/slug.ts</span>                  </span><span class="t-row">  <span class="t-b">←</span> for agents · <span class="t-b">?</span> for shortcuts                  </span><!-- /frame:3 --></pre>
         </div>
         <figcaption class="vbg-caption">
           <span lang="en">Unedited captures of acpc in a 100 × 34 terminal. OpenCode runs through <code>opencode acp</code>, Claude through <code>claude-agent-acp</code>. The OpenCode session is still there in <code>/resume</code>.</span>

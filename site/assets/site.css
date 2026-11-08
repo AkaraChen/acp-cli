@@ -43,7 +43,8 @@ html[lang="zh-CN"] .vbg-report {
   gap: var(--vbg-space-1);
 }
 
-.vbg-custom-lang button {
+#lang button {
+  min-height: 0;
   font: inherit;
   color: var(--vbg-text-secondary);
   background: transparent;
@@ -52,7 +53,7 @@ html[lang="zh-CN"] .vbg-report {
   cursor: pointer;
 }
 
-.vbg-custom-lang button[aria-pressed="true"] {
+#lang button[aria-pressed="true"] {
   color: var(--vbg-text-primary);
   text-decoration: underline;
   text-underline-offset: 4px;
@@ -85,30 +86,50 @@ html[lang="zh-CN"] .vbg-report {
 
 .vbg-custom-demo {
   margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  grid-template-areas:
+    "term head"
+    "cap  head";
+  column-gap: var(--vbg-space-8);
+  row-gap: var(--vbg-space-3);
+  align-items: start;
+  min-width: 0;
+}
+
+.vbg-custom-demo-head {
+  grid-area: head;
   display: flex;
   flex-direction: column;
   gap: var(--vbg-space-3);
   min-width: 0;
 }
 
-.vbg-custom-demo-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--vbg-space-3);
-}
-
 .vbg-custom-demo-head > * {
   margin: 0;
 }
 
-.vbg-custom-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-top: 1px solid var(--vbg-border-default);
+.vbg-custom-demo > .vbg-custom-term {
+  grid-area: term;
+  justify-self: start;
 }
 
-.vbg-custom-steps button {
+.vbg-custom-demo > figcaption {
+  grid-area: cap;
+  margin: 0;
+  max-width: 68ch;
+}
+
+.vbg-custom-steps {
   display: flex;
+  flex-direction: column;
+}
+
+#demo-steps button {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  justify-content: flex-start;
   gap: var(--vbg-space-3);
   align-items: baseline;
   text-align: left;
@@ -118,22 +139,22 @@ html[lang="zh-CN"] .vbg-report {
   color: var(--vbg-text-secondary);
   background: transparent;
   border: 0;
-  border-top: 2px solid transparent;
-  margin-top: -1px;
-  padding: var(--vbg-space-3) var(--vbg-space-4) var(--vbg-space-3) 0;
+  border-left: 2px solid var(--vbg-border-subtle);
+  padding: var(--vbg-space-3) var(--vbg-space-4);
   cursor: pointer;
 }
 
-.vbg-custom-steps button:hover {
+#demo-steps button:hover {
   color: var(--vbg-text-primary);
+  background: transparent;
 }
 
-.vbg-custom-steps button[aria-selected="true"] {
+#demo-steps button[aria-selected="true"] {
   color: var(--vbg-text-primary);
-  border-top-color: var(--vbg-text-primary);
+  border-left-color: var(--vbg-text-primary);
 }
 
-.vbg-custom-steps button:focus-visible {
+#demo-steps button:focus-visible {
   outline: 2px solid var(--vbg-focus);
   outline-offset: 2px;
 }
@@ -144,6 +165,7 @@ html[lang="zh-CN"] .vbg-report {
 }
 
 .vbg-custom-term {
+  max-width: 100%;
   background: var(--vbg-surface-secondary);
   border: 1px solid var(--vbg-border-subtle);
   overflow-x: auto;
@@ -151,13 +173,27 @@ html[lang="zh-CN"] .vbg-report {
 
 .vbg-custom-term pre {
   margin: 0;
-  padding: var(--vbg-space-4) var(--vbg-space-5);
+  padding: var(--vbg-space-4) 0;
   font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.5;
   color: var(--vbg-text-primary);
   white-space: pre;
-  min-height: calc(34 * 1.45em);
+  width: max-content;
+  min-width: 100%;
+}
+
+/* One terminal row; background runs fill its full height. */
+.t-row {
+  display: block;
+  height: 1.5em;
+  padding: 0 var(--vbg-space-4);
+}
+
+.t-row > span {
+  display: inline-block;
+  height: 100%;
+  vertical-align: top;
 }
 
 .vbg-custom-term pre:focus-visible {
@@ -178,6 +214,7 @@ html[lang="zh-CN"] .vbg-report {
 .t-i { font-style: italic; }
 .t-u { text-decoration: underline; }
 .t-r { background: var(--vbg-text-primary); color: var(--vbg-surface-secondary); }
+.t-r.t-d { background: var(--vbg-text-secondary); }
 .t-bg { background: var(--vbg-border-subtle); }
 .t-green { color: var(--vbg-color-success); }
 .t-blue { color: var(--vbg-color-info); }
@@ -356,22 +393,17 @@ html[lang="zh-CN"] .vbg-report {
   color: var(--vbg-text-on-contrast-secondary);
 }
 
-@media (max-width: 900px) {
-  .vbg-custom-steps {
+@media (max-width: 1180px) {
+  .vbg-custom-demo {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "head"
+      "term"
+      "cap";
   }
+}
 
-  .vbg-custom-steps button {
-    border-top: 0;
-    border-left: 2px solid transparent;
-    margin-top: 0;
-    padding: var(--vbg-space-2) var(--vbg-space-3);
-  }
-
-  .vbg-custom-steps button[aria-selected="true"] {
-    border-left-color: var(--vbg-text-primary);
-  }
-
+@media (max-width: 900px) {
   .vbg-custom-nots {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -380,7 +412,6 @@ html[lang="zh-CN"] .vbg-report {
 @media (max-width: 600px) {
   .vbg-custom-term pre {
     font-size: 11px;
-    padding: var(--vbg-space-3);
   }
 
   .vbg-custom-tree li {

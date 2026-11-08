@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render tmux `capture-pane -e` frames into site/index.html.
+"""Render tmux `capture-pane -e -N` frames into site/index.html.
 
 Usage: site/tools/ansi2html.py   (reads site/frames/N.ans, rewrites the
 <!-- frame:N --> ... <!-- /frame:N --> regions of site/index.html)
@@ -95,20 +95,22 @@ def render(text):
                     i += 4
             i += 1
 
-    lines = text.rstrip("\n").split("\n")
-    for line in lines:
+    rows = []
+    for line in text.rstrip("\n").split("\n"):
+        cells = []
         pos = 0
         for m in SGR.finditer(line):
             chunk = line[pos : m.start()]
             if chunk:
-                out.append(span(chunk, classes()))
+                cells.append(span(chunk, classes()))
             apply(m.group(1))
             pos = m.end()
         chunk = line[pos:]
         if chunk:
-            out.append(span(chunk, classes()))
-        out.append("\n")
-    return "".join(out).rstrip("\n")
+            cells.append(span(chunk, classes()))
+        # One block per terminal row, so background runs fill the row height.
+        rows.append('<span class="t-row">' + "".join(cells) + "</span>")
+    return "".join(rows)
 
 
 def span(text, cls):
