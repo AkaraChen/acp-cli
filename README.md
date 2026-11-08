@@ -86,8 +86,6 @@ use their own file system and shell.
 
 ### Limitations
 
-- `acpc app-server` stops when stdin closes; requests still in flight are
-  dropped.
 - A session opened before its agent restarted (crash or terminal sign-in)
   must be reopened with `/resume`.
 
@@ -129,7 +127,8 @@ Tests:
      terminal handoff;
   5. approval prompts that show the agent's own permission options;
   6. number and multi-select fields in elicitation forms;
-  7. regenerated protocol schema fixtures (drop and regenerate on bumps).
+  7. upstream's schema fixture tests skipped (the fixtures do not include
+     the `acpc/*` extension).
 - `third_party/codex/` — generated checkout; never edit without exporting.
 
 To change upstream code: edit in `third_party/codex`, commit there, then
