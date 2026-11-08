@@ -118,7 +118,8 @@ Tests:
 
 - `UPSTREAM` — the openai/codex commit acpc builds against.
 - `patches/*.patch` — the acpc patch series (`git format-patch` files):
-  1. add acpc's crates to the Codex workspace;
+  1. add acpc's crates to the Codex workspace and drop its V8-based members,
+     so the build never fetches V8;
   2. `acpc/*` protocol extension (agent commands, session options and modes,
      notices, agent list, agent selection, sign-in, terminal handoff) and an
      acpc mode switch in the TUI, off unless acpc enables it;

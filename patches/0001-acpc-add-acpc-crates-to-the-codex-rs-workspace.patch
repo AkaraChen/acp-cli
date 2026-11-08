@@ -3,15 +3,16 @@ From: AkaraChen <akarachen@outlook.com>
 Date: Sun, 8 Nov 2026 09:30:10 +0100
 Subject: [PATCH] acpc: add acpc crates to the codex-rs workspace
 
-acpc keeps its own crates outside the upstream tree; they join this
-workspace so they inherit the toolchain, [patch] tables, profiles and
-lockfile.
+Also drop the V8-based members (code-mode-host, code-mode-runtime,
+v8-poc) and the rusty_v8 git override. acpc never builds them, but cargo
+clones every git dependency of the workspace, with its submodules (all
+of V8), before it can build anything.
 ---
- codex-rs/Cargo.toml | 5 +++++
- 1 file changed, 5 insertions(+)
+ codex-rs/Cargo.toml | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
 
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 4390ffa..5c60532 100644
+index 4390ffa..cb0226a 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,10 @@
@@ -25,3 +26,29 @@ index 4390ffa..5c60532 100644
      "aws-auth",
      "analytics",
      "agent-graph-store",
+@@ -28,9 +33,7 @@ members = [
+     "install-context",
+     "codex-backend-openapi-models",
+     "code-mode",
+-    "code-mode-host",
+     "code-mode-protocol",
+-    "code-mode-runtime",
+     "plugin-host",
+     "codex-home",
+     "cloud-config",
+@@ -119,7 +122,6 @@ members = [
+     "tui",
+     "user-verification",
+     "tools",
+-    "v8-poc",
+     "websocket-auth",
+     "websocket-client",
+     "windows-sandbox-rs/tests/support",
+@@ -682,7 +684,6 @@ opt-level = 0
+ crossterm = { git = "https://github.com/openai-oss-forks/crossterm", rev = "ed1cdab335221515706178d68495bba2aed1924f" }
+ tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "02cb49fa827411e9279e3688d19ab9e82661b0e8" }
+ tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "db4be399bc1b8b5de2edb46c7187834edabf7e30" }
+-v8 = { git = "https://github.com/openai-oss-forks/rusty_v8.git", rev = "90a65f887a0c0f048f3784afbcb320b373c8a2e0" }
+ 
+ # Uncomment to debug local changes.
+ # rmcp = { path = "../../rust-sdk/crates/rmcp" }
