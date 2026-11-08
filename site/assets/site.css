@@ -278,10 +278,6 @@ html[lang="zh-CN"] .vbg-report {
   color: var(--vbg-text-secondary);
 }
 
-.vbg-custom-diagram pre {
-  padding: var(--vbg-space-5);
-}
-
 /* Quick start */
 
 #start-band {
