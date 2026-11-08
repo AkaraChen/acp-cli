@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>acpc: one terminal UI for every coding agent</title>
+<meta name="description" content="acpc runs any Agent Client Protocol agent inside the OpenAI Codex terminal UI, and lets you fork a conversation from one agent onto another.">
+<script>
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem("acpc-lang"); } catch (e) {}
+    var lang = saved || (/^zh/i.test(navigator.language) ? "zh-CN" : "en");
+    document.documentElement.lang = lang;
+    document.documentElement.classList.add("js");
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet" referrerpolicy="no-referrer">
+<link href="assets/vercel-brand.css" rel="stylesheet">
+<link href="assets/site.css" rel="stylesheet">
+</head>
+<body class="vbg-report">
+<div class="vbg-shell">
+  <a class="vbg-skip-link" href="#main"><span lang="en">Skip to content</span><span lang="zh-CN">跳到正文</span></a>
+
+  <header class="vbg-header">
+    <div class="vbg-masthead">
+      <span class="vbg-identity"><a class="vbg-custom-wordmark" href="#main">acpc</a></span>
+      <div class="vbg-document-meta vbg-custom-nav">
+        <a href="https://github.com/AkaraChen/acpc">GitHub</a>
+        <span class="vbg-custom-lang" role="group" aria-label="Language">
+          <button type="button" data-set-lang="en">EN</button>
+          <button type="button" data-set-lang="zh-CN">中文</button>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <section class="vbg-section vbg-custom-hero">
+      <div class="vbg-custom-hero-copy">
+        <h1 class="vbg-display">
+          <span lang="en">One terminal UI for every coding agent.</span>
+          <span lang="zh-CN">一个终端界面，接入所有 coding agent。</span>
+        </h1>
+        <p class="vbg-lede">
+          <span lang="en">acpc runs any <a href="https://agentclientprotocol.com">Agent Client Protocol</a> agent (Claude, Gemini, OpenCode, Goose, or your own) inside the OpenAI Codex terminal UI. Halfway through a task, hand the conversation to another agent and keep going.</span>
+          <span lang="zh-CN">acpc 把任何支持 <a href="https://agentclientprotocol.com">Agent Client Protocol</a> 的 agent（Claude、Gemini、OpenCode、Goose，或者你自己写的）放进 OpenAI Codex 的终端界面里。任务做到一半，可以把整段对话交给另一个 agent 接着做。</span>
+        </p>
+        <div class="vbg-cluster vbg-custom-actions">
+          <a class="vbg-button" data-variant="primary" href="https://github.com/AkaraChen/acpc">
+            <span lang="en">Star on GitHub</span><span lang="zh-CN">在 GitHub 上 Star</span>
+          </a>
+          <a class="vbg-button" href="#start"><span lang="en">Build from source</span><span lang="zh-CN">从源码构建</span></a>
+        </div>
+      </div>
+
+      <figure class="vbg-custom-demo" aria-labelledby="demo-title">
+        <div class="vbg-custom-demo-head">
+          <p class="vbg-heading-16" id="demo-title">
+            <span lang="en">One conversation, two agents</span>
+            <span lang="zh-CN">同一段对话，两个 agent</span>
+          </p>
+          <div class="vbg-custom-steps" role="tablist" aria-labelledby="demo-title">
+            <button type="button" role="tab" id="step-1" aria-controls="frame-1" aria-selected="true">
+              <span class="vbg-custom-step-n">1</span>
+              <span lang="en">OpenCode reads the file and explains it</span>
+              <span lang="zh-CN">OpenCode 读文件并解释</span>
+            </button>
+            <button type="button" role="tab" id="step-2" aria-controls="frame-2" aria-selected="false" tabindex="-1">
+              <span class="vbg-custom-step-n">2</span>
+              <span lang="en"><code>/agent</code>, Claude, bring this conversation</span>
+              <span lang="zh-CN"><code>/agent</code>，选 Claude，带上这段对话</span>
+            </button>
+            <button type="button" role="tab" id="step-3" aria-controls="frame-3" aria-selected="false" tabindex="-1">
+              <span class="vbg-custom-step-n">3</span>
+              <span lang="en">Claude picks up the context and makes the edit</span>
+              <span lang="zh-CN">Claude 接住上下文，直接改代码</span>
+            </button>
+          </div>
+        </div>
+        <div class="vbg-custom-term">
+          <pre id="frame-1" role="tabpanel" aria-labelledby="step-1" tabindex="0"><!-- frame:1 -->
+  <span class="t-blue">&gt;_ </span><span class="t-b">acpc</span>
+     <span class="t-d">/tmp/acpc-demo/acpc-demo</span>
+<span class="t-d">  permissions: </span><span class="t-b t-magenta">YOLO mode</span>
+
+<span class="t-bg"> </span>
+<span class="t-b t-d t-bg">› </span><span class="t-bg">What does slugify in src/slug.ts do? Two sentences.</span>
+<span class="t-bg"> </span>
+
+<span class="t-green">•</span> <span class="t-b">Called</span> <span class="t-blue">src/slug.ts</span><span class="t-d"> · 189ms</span>
+<span class="t-d">  … 3 earlier lines hidden</span>
+<span class="t-d">  └     .replace(/[^a-z0-9]+/g, "-")</span>
+<span class="t-d">        .replace(/^-|-$/g, "");</span>
+<span class="t-d">    }</span>
+<span class="t-d">    + Show details</span>
+
+<span class="t-d">• </span>It converts a title into a URL-friendly slug by lowercasing it, replacing any run of non-
+  alphanumeric characters with a hyphen, and trimming leading/trailing hyphens. For example, <span class="t-green">"Hello</span>
+  <span class="t-green">World!"</span> becomes <span class="t-green">"hello-world"</span>.
+
+<span class="t-d">  Worked for 3s • 2:58 PM</span>
+
+
+
+
+
+
+
+
+
+<span class="t-b">›</span> <span class="t-d">Ask the agent anything</span>
+
+  <span class="t-yellow">opencode-go/glm-5.3 low</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span>
+  <span class="t-b">←</span> for agents · <span class="t-b">?</span> for shortcuts<!-- /frame:1 --></pre>
+          <pre id="frame-2" role="tabpanel" aria-labelledby="step-2" tabindex="0"><!-- frame:2 -->
+  <span class="t-blue">&gt;_ </span><span class="t-b">acpc</span>
+     <span class="t-d">/tmp/acpc-demo/acpc-demo</span>
+<span class="t-d">  permissions: </span><span class="t-b t-magenta">YOLO mode</span>
+
+<span class="t-bg"> </span>
+<span class="t-b t-d t-bg">› </span><span class="t-bg">What does slugify in src/slug.ts do? Two sentences.</span>
+<span class="t-bg"> </span>
+
+<span class="t-green">•</span> <span class="t-b">Called</span> <span class="t-blue">src/slug.ts</span><span class="t-d"> · 189ms</span>
+<span class="t-d">  … 3 earlier lines hidden</span>
+<span class="t-d">  └     .replace(/[^a-z0-9]+/g, "-")</span>
+<span class="t-d">        .replace(/^-|-$/g, "");</span>
+<span class="t-d">    }</span>
+<span class="t-d">    + Show details</span>
+
+<span class="t-d">• </span>It converts a title into a URL-friendly slug by lowercasing it, replacing any run of non-
+  alphanumeric characters with a hyphen, and trimming leading/trailing hyphens. For example, <span class="t-green">"Hello</span>
+  <span class="t-green">World!"</span> becomes <span class="t-green">"hello-world"</span>.
+
+<span class="t-d">  Worked for 3s • 2:58 PM</span>
+
+
+
+
+
+  <span class="t-b">Switch to Claude</span>
+  <span class="t-d">Bring the current conversation along?</span>
+
+
+<span class="t-b t-r">› 1. Bring this conversation  </span><span class="t-r">Fork it to Claude, which gets it with your next message</span>
+  2. Start fresh              <span class="t-d">This conversation stays available in /resume</span>
+
+  <span class="t-b">enter</span><span class="t-d"> select · </span><span class="t-b">esc</span><span class="t-d"> back</span><!-- /frame:2 --></pre>
+          <pre id="frame-3" role="tabpanel" aria-labelledby="step-3" tabindex="0"><!-- frame:3 --><span class="t-b t-d t-bg">› </span><span class="t-bg">What</span><span class="t-bg"> </span><span class="t-bg">does</span><span class="t-bg"> </span><span class="t-bg">slugify</span><span class="t-bg"> </span><span class="t-bg">in</span><span class="t-bg"> </span><span class="t-bg">src/slug.ts</span><span class="t-bg"> </span><span class="t-bg">do?</span><span class="t-bg"> </span><span class="t-bg">Two</span><span class="t-bg"> </span><span class="t-bg">sentences.</span>
+  alphanumeric characters with a hyphen, and trimming leading/trailing hyphens. For example, <span class="t-green">"Hello</span>
+  <span class="t-green">World!"</span> becomes <span class="t-green">"hello-world"</span>.
+
+<span class="t-d">  Worked for 3s • 2:58 PM</span>
+
+<span class="t-d">• </span>Fork created. You can continue here.
+
+<span class="t-bg"> </span>
+<span class="t-b t-d t-bg">› </span><span class="t-bg">Keep accented letters instead of dropping them, so Café becomes cafe. Make the edit, then reply</span>
+<span class="t-bg"> </span><span class="t-bg"> </span><span class="t-bg">in</span><span class="t-bg"> </span><span class="t-bg">one</span><span class="t-bg"> </span><span class="t-bg">short</span><span class="t-bg"> </span><span class="t-bg">sentence.</span>
+<span class="t-bg"> </span>
+
+<span class="t-b t-green">•</span> <span class="t-b">Ran</span> <span class="t-blue">Terminal</span>
+<span class="t-d">  └     .replace(/^-|-$/g, "");</span>
+<span class="t-d">    }</span>
+<span class="t-d">    ```</span>
+<span class="t-d">    + 5 lines (^t to expand)</span>
+
+<span class="t-b t-green">•</span> <span class="t-b">Ran</span> <span class="t-blue">Terminal</span>
+<span class="t-d">  └ ```console</span>
+<span class="t-d">    cafe-au-lait hello-world</span>
+<span class="t-d">    ```</span>
+
+<span class="t-d">• </span><span class="t-green">slugify</span> in <span class="t-green">src/slug.ts</span> now strips accents before building the slug, so "Café" becomes "cafe" (a
+  quick test turned "Café au Lait!" into <span class="t-green">cafe-au-lait</span>).
+
+<span class="t-d">  Worked for 9s • 2:58 PM</span>
+
+
+<span class="t-b">›</span> <span class="t-d">Ask the agent anything</span>
+
+  <span class="t-yellow">default high</span> · <span class="t-green">/tmp/acpc-demo/acpc-demo</span> · <span class="t-cyan">Slugify accent handling in src/slug.ts</span>
+  <span class="t-b">←</span> for agents · <span class="t-b">?</span> for shortcuts<!-- /frame:3 --></pre>
+        </div>
+        <figcaption class="vbg-caption">
+          <span lang="en">Unedited captures of acpc in a 100 × 34 terminal. OpenCode runs through <code>opencode acp</code>, Claude through <code>claude-agent-acp</code>. The OpenCode session is still there in <code>/resume</code>.</span>
+          <span lang="zh-CN">acpc 在 100 × 34 终端里的原始截图，未经修饰。OpenCode 通过 <code>opencode acp</code> 接入，Claude 通过 <code>claude-agent-acp</code> 接入。原来的 OpenCode 会话仍然可以在 <code>/resume</code> 里找到。</span>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="vbg-section" aria-labelledby="codex">
+      <div class="vbg-grid">
+        <div class="vbg-span-5 vbg-flow">
+          <h2 class="vbg-heading-24" id="codex">
+            <span lang="en">Used to Codex? Keep your habits and change the agent.</span>
+            <span lang="zh-CN">用惯了 Codex？习惯不用改，换个 agent 就行。</span>
+          </h2>
+          <p>
+            <span lang="en">acpc is built from <a href="https://github.com/openai/codex">openai/codex</a> at a pinned commit plus a patch series of about 130 KB. The screen, the composer, diffs, approvals and history are Codex's own code, so the keys you know still work. Try Claude, Gemini or OpenCode one session at a time, without learning a new tool first.</span>
+            <span lang="zh-CN">acpc 基于 <a href="https://github.com/openai/codex">openai/codex</a> 的一个固定 commit 构建，上面只叠了大约 130 KB 的补丁。界面、输入框、diff、审批和历史记录都是 Codex 原本的代码，你熟悉的按键照样能用。你可以一次一个会话地试 Claude、Gemini 或 OpenCode，不用先学一个新工具。</span>
+          </p>
+        </div>
+        <div class="vbg-span-7 vbg-custom-split">
+          <div class="vbg-flow">
+            <h3 class="vbg-heading-16"><span lang="en">Stays exactly like Codex</span><span lang="zh-CN">和 Codex 完全一样</span></h3>
+            <ul class="vbg-custom-list">
+              <li><span lang="en">Streaming answers and reasoning</span><span lang="zh-CN">流式输出回答和推理过程</span></li>
+              <li><span lang="en">Tool calls with diffs</span><span lang="zh-CN">带 diff 的工具调用</span></li>
+              <li><span lang="en">Approval prompts and plans</span><span lang="zh-CN">审批提示和计划</span></li>
+              <li><span lang="en">Session history and <code>/resume</code></span><span lang="zh-CN">会话历史和 <code>/resume</code></span></li>
+              <li><span lang="en">The composer and <code>/</code> popup</span><span lang="zh-CN">输入框和 <code>/</code> 弹出菜单</span></li>
+            </ul>
+          </div>
+          <div class="vbg-flow">
+            <h3 class="vbg-heading-16"><span lang="en">Comes from your agent</span><span lang="zh-CN">由你选的 agent 提供</span></h3>
+            <ul class="vbg-custom-list">
+              <li><span lang="en">Models and reasoning levels in <code>/model</code></span><span lang="zh-CN"><code>/model</code> 里的模型和推理强度</span></li>
+              <li><span lang="en">Modes on <kbd>Shift</kbd>+<kbd>Tab</kbd></span><span lang="zh-CN"><kbd>Shift</kbd>+<kbd>Tab</kbd> 切换的模式</span></li>
+              <li><span lang="en">Other settings in <code>/options</code></span><span lang="zh-CN"><code>/options</code> 里的其他设置</span></li>
+              <li><span lang="en">Its own slash commands</span><span lang="zh-CN">它自己的斜杠命令</span></li>
+              <li><span lang="en">The exact permission options it sends</span><span lang="zh-CN">它发来的权限选项，原样呈现</span></li>
+            </ul>
+          </div>
+          <p class="vbg-caption vbg-custom-span-all">
+            <span lang="en">Features that only make sense with Codex are hidden: cloud tasks, sandboxing, review and worktrees.</span>
+            <span lang="zh-CN">只对 Codex 自己有意义的功能被隐藏了：云端任务、沙箱、review 和 worktree。</span>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="vbg-section" aria-labelledby="fork">
+      <div class="vbg-grid">
+        <div class="vbg-span-5 vbg-flow">
+          <h2 class="vbg-heading-24" id="fork">
+            <span lang="en">Switching agents doesn't mean starting over.</span>
+            <span lang="zh-CN">换 agent，不用从头再来。</span>
+          </h2>
+          <p>
+            <span lang="en">One agent is better at reading a codebase, another at the edit, a third is cheaper for the follow-up. <code>/agent</code> forks the conversation onto the agent you pick: it stays on screen, the new agent receives it as context with your next message, and the original session is untouched.</span>
+            <span lang="zh-CN">有的 agent 擅长读代码，有的擅长改代码，还有的做收尾更便宜。<code>/agent</code> 会把当前对话 fork 到你选的 agent 上：对话留在屏幕上，新 agent 在你发下一条消息时拿到全部上下文，原来的会话不受影响。</span>
+          </p>
+        </div>
+        <ol class="vbg-span-7 vbg-custom-tree" aria-label="Session tree">
+          <li>
+            <span class="vbg-mono">opencode</span>
+            <span><span lang="en">Explains <code>slugify</code></span><span lang="zh-CN">解释 <code>slugify</code></span></span>
+            <span class="vbg-meta"><span lang="en">Original session, kept as is</span><span lang="zh-CN">原会话，保持原样</span></span>
+          </li>
+          <li>
+            <span class="vbg-mono">claude</span>
+            <span><span lang="en">Forked with the full conversation, makes the edit</span><span lang="zh-CN">带着完整对话 fork 过来，负责改代码</span></span>
+            <span class="vbg-meta"><span lang="en">Shows where it came from in <code>/resume</code></span><span lang="zh-CN">在 <code>/resume</code> 里标明来源</span></span>
+          </li>
+          <li>
+            <span class="vbg-mono">gemini</span>
+            <span><span lang="en">Fork again for review, or start fresh</span><span lang="zh-CN">再 fork 一次做 review，或者重新开始</span></span>
+            <span class="vbg-meta"><span lang="en">Any agent in your config</span><span lang="zh-CN">配置里的任何 agent</span></span>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="vbg-section" aria-labelledby="acp">
+      <div class="vbg-grid">
+        <div class="vbg-span-7 vbg-flow">
+          <h2 class="vbg-heading-24" id="acp">
+            <span lang="en">A complete ACP v1 client, and nothing more.</span>
+            <span lang="zh-CN">完整的 ACP v1 客户端，仅此而已。</span>
+          </h2>
+          <p>
+            <span lang="en">Zed brings ACP agents into an editor and Toad builds a new terminal UI for them. acpc takes the Codex terminal UI as it is and gives it an ACP backend. It ships no agent and favours none: anything that speaks ACP over stdio works after one <code>acpc add</code>. If you build an agent, acpc is a strict client to test it against.</span>
+            <span lang="zh-CN">Zed 把 ACP agent 放进编辑器，Toad 为它们做了一个新的终端界面。acpc 直接用 Codex 的终端界面，给它接上 ACP 后端。acpc 不自带 agent，也不偏向任何一家：只要 agent 通过 stdio 说 ACP，一条 <code>acpc add</code> 就能用。如果你在写 agent，acpc 是一个严格的客户端，可以拿来测试。</span>
+          </p>
+        </div>
+        <div class="vbg-span-12 vbg-table-wrap">
+          <table>
+            <caption class="vbg-visually-hidden"><span lang="en">ACP v1 client features implemented by acpc</span><span lang="zh-CN">acpc 实现的 ACP v1 客户端功能</span></caption>
+            <thead>
+              <tr>
+                <th scope="col"><span lang="en">Area</span><span lang="zh-CN">范围</span></th>
+                <th scope="col"><span lang="en">What acpc does</span><span lang="zh-CN">acpc 的做法</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row"><span lang="en">Sessions</span><span lang="zh-CN">会话</span></th><td><span class="vbg-mono">new</span>, <span class="vbg-mono">load</span>, <span class="vbg-mono">resume</span>, <span class="vbg-mono">list</span>, <span class="vbg-mono">close</span>, <span class="vbg-mono">delete</span></td></tr>
+              <tr><th scope="row"><span lang="en">Permissions</span><span lang="zh-CN">权限</span></th><td><span lang="en">Approval prompts that offer exactly the options the agent sent</span><span lang="zh-CN">审批提示只给出 agent 发来的那些选项</span></td></tr>
+              <tr><th scope="row"><span lang="en">Elicitation</span><span lang="zh-CN">Elicitation</span></th><td><span lang="en">Forms, including number and multi-select fields, or links</span><span lang="zh-CN">表单（含数字和多选字段）或链接</span></td></tr>
+              <tr><th scope="row"><span lang="en">Config and modes</span><span lang="zh-CN">配置与模式</span></th><td><span lang="en">Models in <code>/model</code>, modes on <kbd>Shift</kbd>+<kbd>Tab</kbd>, the rest in <code>/options</code></span><span lang="zh-CN">模型在 <code>/model</code>，模式用 <kbd>Shift</kbd>+<kbd>Tab</kbd>，其余在 <code>/options</code></span></td></tr>
+              <tr><th scope="row"><span lang="en">Commands</span><span lang="zh-CN">命令</span></th><td><span lang="en">The agent's available commands in the <code>/</code> popup</span><span lang="zh-CN">agent 提供的命令出现在 <code>/</code> 弹出菜单里</span></td></tr>
+              <tr><th scope="row"><span lang="en">Sign-in</span><span lang="zh-CN">登录</span></th><td><span lang="en"><code>agent</code> methods through <code>authenticate</code>, <code>terminal</code> methods by handing over the terminal</span><span lang="zh-CN"><code>agent</code> 方法走 <code>authenticate</code>，<code>terminal</code> 方法把终端交给 agent 自己的登录程序</span></td></tr>
+              <tr><th scope="row"><span lang="en">Cancellation</span><span lang="zh-CN">取消</span></th><td><span lang="en">Turns and pending requests</span><span lang="zh-CN">回合以及挂起中的请求</span></td></tr>
+              <tr><th scope="row"><span lang="en">Not advertised</span><span lang="zh-CN">不声明</span></th><td><span lang="en"><code>fs/*</code> and <code>terminal/*</code>: agents use their own file system and shell</span><span lang="zh-CN"><code>fs/*</code> 和 <code>terminal/*</code>：agent 用自己的文件系统和 shell</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="vbg-section" aria-labelledby="how">
+      <div class="vbg-grid">
+        <div class="vbg-span-5 vbg-flow">
+          <h2 class="vbg-heading-24" id="how">
+            <span lang="en">How it works</span>
+            <span lang="zh-CN">工作原理</span>
+          </h2>
+          <p>
+            <span lang="en">The Codex TUI already talks to its backend through the app-server protocol. acpc gives it a backend that translates that protocol into ACP: a thread is an agent session, a turn is a prompt, and session updates become messages, plans, tool calls and diffs.</span>
+            <span lang="zh-CN">Codex TUI 本来就通过 app-server 协议和后端通信。acpc 给它换了一个后端，把这套协议翻译成 ACP：thread 对应 agent 会话，turn 对应一次 prompt，会话更新变成消息、计划、工具调用和 diff。</span>
+          </p>
+          <p>
+            <span lang="en"><code>acpc app-server</code> exposes the same bridge on stdio, so tools built to drive Codex can drive any ACP agent.</span>
+            <span lang="zh-CN"><code>acpc app-server</code> 把同一个 bridge 暴露在 stdio 上，原本驱动 Codex 的工具也能驱动任何 ACP agent。</span>
+          </p>
+        </div>
+        <ol class="vbg-span-7 vbg-custom-stack">
+          <li>
+            <span class="vbg-heading-16">Codex TUI</span>
+            <span class="vbg-meta"><span lang="en">Upstream at a pinned commit, plus <code>patches/</code></span><span lang="zh-CN">上游固定 commit，加上 <code>patches/</code></span></span>
+          </li>
+          <li class="vbg-custom-wire"><span class="vbg-mono">Codex app-server protocol</span></li>
+          <li>
+            <span class="vbg-heading-16">acp-bridge</span>
+            <span class="vbg-meta"><span lang="en">Threads, turns and items to ACP sessions and updates</span><span lang="zh-CN">thread、turn、item 与 ACP 会话和更新互相转换</span></span>
+          </li>
+          <li class="vbg-custom-wire"><span class="vbg-mono">ACP v1, JSON-RPC over stdio</span></li>
+          <li>
+            <span class="vbg-heading-16">acp-client</span>
+            <span class="vbg-meta"><span lang="en">The official Rust SDK plus client semantics</span><span lang="zh-CN">官方 Rust SDK 加上客户端语义</span></span>
+          </li>
+          <li class="vbg-custom-wire" aria-hidden="true"></li>
+          <li>
+            <span class="vbg-heading-16"><span lang="en">Your agent</span><span lang="zh-CN">你的 agent</span></span>
+            <span class="vbg-meta"><span lang="en">Any process in <code>config.toml</code></span><span lang="zh-CN"><code>config.toml</code> 里的任意进程</span></span>
+          </li>
+        </ol>
+        <dl class="vbg-span-12 vbg-custom-nots">
+          <div><dt><span lang="en">No telemetry</span><span lang="zh-CN">没有遥测</span></dt><dd><span lang="en">Nothing is sent anywhere but your agent.</span><span lang="zh-CN">除了你的 agent，什么都不发出去。</span></dd></div>
+          <div><dt><span lang="en">No local transcripts</span><span lang="zh-CN">不存本地记录</span></dt><dd><span lang="en">History comes from the agent's own <code>session/load</code>.</span><span lang="zh-CN">历史来自 agent 自己的 <code>session/load</code>。</span></dd></div>
+          <div><dt><span lang="en">No sandbox or shell</span><span lang="zh-CN">没有沙箱和 shell</span></dt><dd><span lang="en">Agents use their own tools.</span><span lang="zh-CN">agent 用它自己的工具。</span></dd></div>
+          <div><dt><span lang="en">No credentials</span><span lang="zh-CN">不碰凭证</span></dt><dd><span lang="en">Sign-in stays between you and the agent.</span><span lang="zh-CN">登录只发生在你和 agent 之间。</span></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="vbg-band" data-tone="contrast" aria-labelledby="start" id="start-band">
+      <div class="vbg-grid">
+        <div class="vbg-span-5 vbg-flow">
+          <h2 class="vbg-heading-24" id="start">
+            <span lang="en">Start in three commands</span>
+            <span lang="zh-CN">三条命令开始用</span>
+          </h2>
+          <p>
+            <span lang="en">acpc builds from source. You need Rust, <code>git</code>, a C compiler, OpenSSL headers and <a href="https://github.com/casey/just">just</a>. The first build compiles the Codex workspace and takes a while.</span>
+            <span lang="zh-CN">acpc 目前从源码构建，需要 Rust、<code>git</code>、C 编译器、OpenSSL 头文件和 <a href="https://github.com/casey/just">just</a>。第一次构建会编译整个 Codex workspace，需要一些时间。</span>
+          </p>
+          <div class="vbg-cluster">
+            <a class="vbg-button" data-variant="primary" href="https://github.com/AkaraChen/acpc">
+              <span lang="en">Star on GitHub</span><span lang="zh-CN">在 GitHub 上 Star</span>
+            </a>
+          </div>
+        </div>
+        <div class="vbg-span-7 vbg-flow vbg-custom-commands">
+<pre><code><span class="vbg-custom-dim"># build</span>
+git clone https://github.com/AkaraChen/acpc &amp;&amp; cd acpc
+scripts/sync-upstream
+just build
+
+<span class="vbg-custom-dim"># add agents, then start</span>
+acpc add "opencode acp"
+acpc add --name Claude npx -y @agentclientprotocol/claude-agent-acp@latest
+acpc</code></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="vbg-footer">
+    <span class="vbg-custom-wordmark">acpc</span>
+    <span>
+      <span lang="en">MIT. The Codex checkout and patches are Apache-2.0. Not affiliated with OpenAI.</span>
+      <span lang="zh-CN">MIT 许可。Codex 源码和补丁为 Apache-2.0。与 OpenAI 无关联。</span>
+    </span>
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    document.querySelectorAll("[data-set-lang]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.setLang === root.lang));
+      b.addEventListener("click", function () {
+        root.lang = b.dataset.setLang;
+        try { localStorage.setItem("acpc-lang", root.lang); } catch (e) {}
+        document.querySelectorAll("[data-set-lang]").forEach(function (o) {
+          o.setAttribute("aria-pressed", String(o === b));
+        });
+      });
+    });
+
+    var tabs = Array.prototype.slice.call(document.querySelectorAll(".vbg-custom-steps [role=tab]"));
+    function select(tab, focus) {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute("aria-selected", String(on));
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+      if (focus) tab.focus();
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener("click", function () { select(t); });
+      t.addEventListener("keydown", function (e) {
+        var d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (d) { e.preventDefault(); select(tabs[(i + d + tabs.length) % tabs.length], true); }
+      });
+    });
+    select(tabs[0]);
+  })();
+</script>
+</body>
+</html>
