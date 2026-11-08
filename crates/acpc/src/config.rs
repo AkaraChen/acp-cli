@@ -14,11 +14,12 @@
 //!
 //! [[mcp_servers]]
 //! name = "files"
-//! command = "mcp-files"                # stdio transport
+//! command = "mcp-files"                # stdio; a bare name is looked up on PATH
 //! # url = "https://…"; transport = "http" | "sse"
 //! ```
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -67,6 +68,8 @@ pub struct ModelOverride {
 #[serde(deny_unknown_fields)]
 pub struct McpServerConfig {
     pub name: String,
+    /// Stdio server. Made absolute on load: a relative path is taken from
+    /// the config file's directory, a bare name is looked up on `PATH`.
     pub command: Option<PathBuf>,
     #[serde(default)]
     pub args: Vec<String>,
@@ -86,10 +89,47 @@ impl Config {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
         };
-        let config: Self =
+        let mut config: Self =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        config.validate()?;
+        let invalid = || format!("invalid {}", path.display());
+        config.validate().with_context(invalid)?;
+        let dir = path.parent().unwrap_or(Path::new("."));
+        config
+            .resolve_mcp_commands(dir, std::env::var_os("PATH").as_deref())
+            .with_context(invalid)?;
         Ok(config)
+    }
+
+    /// ACP wants stdio MCP commands as absolute paths.
+    fn resolve_mcp_commands(&mut self, dir: &Path, search_path: Option<&OsStr>) -> anyhow::Result<()> {
+        for server in &mut self.mcp_servers {
+            let Some(command) = &mut server.command else {
+                continue;
+            };
+            if command.is_absolute() {
+                continue;
+            }
+            let bare = command.parent().is_none_or(|parent| parent.as_os_str().is_empty());
+            let resolved = if bare {
+                search_path
+                    .into_iter()
+                    .flat_map(std::env::split_paths)
+                    .map(|entry| entry.join(&*command))
+                    .find(|candidate| is_executable(candidate))
+                    .with_context(|| {
+                        format!(
+                            "mcp server `{}`: `{}` not found on PATH; use an absolute path",
+                            server.name,
+                            command.display()
+                        )
+                    })?
+            } else {
+                dir.join(&*command)
+            };
+            *command = std::path::absolute(&resolved)
+                .with_context(|| format!("mcp server `{}`: {}", server.name, resolved.display()))?;
+        }
+        Ok(())
     }
 
     fn validate(&self) -> anyhow::Result<()> {
@@ -222,6 +262,19 @@ impl McpServerConfig {
     }
 }
 
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    metadata.is_file()
+}
+
 /// Environment changes acpc makes for the embedded TUI that agents must not
 /// inherit (e.g. `CODEX_HOME`).
 #[derive(Debug, Clone, Default)]
@@ -291,5 +344,54 @@ model_override = { env = "B_MODEL" }
             let config: Config = toml::from_str(&format!("{agent}{extra}")).expect("config");
             assert!(config.validate().is_err(), "accepted:\n{extra}");
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn resolves_stdio_mcp_commands() {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = tempfile::tempdir().expect("tempdir");
+        let tool = bin.path().join("mcp-tool");
+        std::fs::write(&tool, "#!/bin/sh\n").expect("write tool");
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::write(bin.path().join("mcp-data"), "").expect("write data");
+        let mut config: Config = toml::from_str(
+            r#"
+[[mcp_servers]]
+name = "bare"
+command = "mcp-tool"
+
+[[mcp_servers]]
+name = "relative"
+command = "bin/server"
+
+[[mcp_servers]]
+name = "absolute"
+command = "/opt/server"
+"#,
+        )
+        .expect("config");
+        config
+            .resolve_mcp_commands(Path::new("/etc/acpc"), Some(bin.path().as_os_str()))
+            .expect("resolved");
+        let commands: Vec<Option<PathBuf>> =
+            config.mcp_servers.iter().map(|server| server.command.clone()).collect();
+        assert_eq!(
+            commands,
+            vec![
+                Some(tool),
+                Some(PathBuf::from("/etc/acpc/bin/server")),
+                Some(PathBuf::from("/opt/server")),
+            ]
+        );
+
+        // A file without the executable bit does not count; load errors
+        // name the config file and the server.
+        let data = "[[mcp_servers]]\nname = \"data\"\ncommand = \"mcp-data\"\n";
+        let mut config: Config = toml::from_str(data).expect("config");
+        assert!(config.resolve_mcp_commands(bin.path(), Some(bin.path().as_os_str())).is_err());
+        let path = bin.path().join("config.toml");
+        std::fs::write(&path, data).expect("write config");
+        let err = format!("{:#}", Config::load(&path).expect_err("not on PATH"));
+        assert!(err.contains(&path.display().to_string()) && err.contains("`data`"), "{err}");
     }
 }

@@ -238,10 +238,8 @@ impl TurnBuilder {
         };
         match &mut self.items[open.index].payload {
             ThreadItemPayload::AgentMessage { text, .. } => *text = open.text,
-            ThreadItemPayload::Reasoning { summary, .. } => {
-                if !open.text.is_empty() {
-                    *summary = vec![open.text];
-                }
+            ThreadItemPayload::Reasoning { summary, .. } if !open.text.is_empty() => {
+                *summary = vec![open.text];
             }
             _ => {}
         }

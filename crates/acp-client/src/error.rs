@@ -72,7 +72,7 @@ pub enum ConnectError {
     UnsupportedProtocolVersion(String),
     #[error("agent exited during initialize{}", stderr_suffix(.stderr))]
     Exited { stderr: String },
-    #[error("agent did not answer initialize within {seconds}s; is it an ACP agent?{}", stderr_suffix(.stderr))]
+    #[error("agent did not answer initialize within {seconds}s{}", stderr_suffix(.stderr))]
     Timeout { seconds: u64, stderr: String },
 }
 

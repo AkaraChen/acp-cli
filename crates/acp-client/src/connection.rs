@@ -12,7 +12,6 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::ConnectionTo;
 use agent_client_protocol::v1::Responder;
 use agent_client_protocol::v1::schema as acp;
-use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -23,12 +22,13 @@ use crate::AgentCaps;
 use crate::AgentCommand;
 use crate::ClientOptions;
 use crate::ConnectError;
+use crate::process::AgentProcess;
 use crate::process::StderrTail;
 use crate::process::spawn_agent;
-use crate::process::terminate;
 
-/// How long an agent may take to answer `initialize` (npx may download it).
-const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long an agent may take to answer `initialize`. Generous: on first
+/// run, npx downloads and installs the agent before it reads stdin.
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Identifies an agent-initiated request awaiting a user decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -180,9 +180,8 @@ pub struct AgentConnection {
     command: AgentCommand,
     shared: Arc<Shared>,
     stderr: StderrTail,
-    child: Mutex<Option<Child>>,
-    /// The agent's process group (it is spawned as a group leader).
-    pgid: Option<i32>,
+    /// Taken by `shutdown`; dropping it kills the agent's process group.
+    process: Mutex<Option<AgentProcess>>,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
 }
 
@@ -287,11 +286,11 @@ impl AgentConnection {
             });
         });
 
-        let mut child = spawned.child;
+        let mut process = spawned.process;
         let cx = match cx_rx.await {
             Ok(cx) => cx,
             Err(_) => {
-                let _ = child.wait().await;
+                process.terminate(Duration::from_secs(2)).await;
                 return Err(ConnectError::Exited {
                     stderr: stderr.snapshot(),
                 });
@@ -300,11 +299,10 @@ impl AgentConnection {
         let request = acp::InitializeRequest::new(ProtocolVersion::V1)
             .client_capabilities(options.client_capabilities())
             .client_info(options.client_info());
-        let pgid = child.id().and_then(|pid| i32::try_from(pid).ok());
         let answer = tokio::time::timeout(INITIALIZE_TIMEOUT, cx.send_request(request).block_task());
         let init = match answer.await {
             Err(_) => {
-                terminate(child, Duration::from_secs(2)).await;
+                process.terminate(Duration::from_secs(2)).await;
                 return Err(ConnectError::Timeout {
                     seconds: INITIALIZE_TIMEOUT.as_secs(),
                     stderr: stderr.snapshot(),
@@ -314,7 +312,7 @@ impl AgentConnection {
             Ok(Err(err)) => {
                 let exited = agent_client_protocol::is_incoming_transport_closed(&err)
                     || agent_client_protocol::is_connection_terminated(&err);
-                terminate(child, Duration::from_secs(2)).await;
+                process.terminate(Duration::from_secs(2)).await;
                 if exited {
                     return Err(ConnectError::Exited {
                         stderr: stderr.snapshot(),
@@ -324,7 +322,7 @@ impl AgentConnection {
             }
         };
         if init.protocol_version != ProtocolVersion::V1 {
-            terminate(child, Duration::from_secs(2)).await;
+            process.terminate(Duration::from_secs(2)).await;
             return Err(ConnectError::UnsupportedProtocolVersion(format!(
                 "{:?}",
                 init.protocol_version
@@ -336,8 +334,7 @@ impl AgentConnection {
             command,
             shared,
             stderr,
-            child: Mutex::new(Some(child)),
-            pgid,
+            process: Mutex::new(Some(process)),
             shutdown: Mutex::new(Some(shutdown_tx)),
         });
         Ok((connection, events_rx))
@@ -505,17 +502,11 @@ impl AgentConnection {
     pub fn cancel(&self, session_id: &acp::SessionId) -> Result<(), AcpError> {
         self.cx
             .send_notification(acp::CancelNotification::new(session_id.clone()))?;
-        let abandoned: Vec<(PendingRequestId, Pending)> = {
-            let mut pending = self.shared.pending();
-            let ids: Vec<PendingRequestId> = pending
-                .iter()
-                .filter(|(_, pending)| pending.session_id() == Some(session_id))
-                .map(|(id, _)| *id)
-                .collect();
-            ids.into_iter()
-                .filter_map(|id| pending.remove(&id).map(|pending| (id, pending)))
-                .collect()
-        };
+        let abandoned: Vec<(PendingRequestId, Pending)> = self
+            .shared
+            .pending()
+            .extract_if(|_, pending| pending.session_id() == Some(session_id))
+            .collect();
         for (id, pending) in abandoned {
             pending.resolve_cancelled();
             self.shared
@@ -566,7 +557,7 @@ impl AgentConnection {
         }
     }
 
-    /// Close stdin, give the agent a moment to exit, then kill its group.
+    /// Close stdin, give the agent a moment to exit, then end its group.
     pub async fn shutdown(&self) {
         if let Some(shutdown) = self
             .shutdown
@@ -576,49 +567,17 @@ impl AgentConnection {
         {
             let _ = shutdown.send(());
         }
-        let child = self
-            .child
+        let process = self
+            .process
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        if let Some(mut child) = child {
-            if tokio::time::timeout(Duration::from_secs(1), child.wait())
-                .await
-                .is_err()
-            {
-                terminate(child, Duration::from_secs(2)).await;
-            }
-        }
-        // The leader may be gone while its children (npx, node, ...) linger.
-        signal_group(self.pgid, Signal::Term);
-    }
-}
-
-impl Drop for AgentConnection {
-    fn drop(&mut self) {
-        signal_group(self.pgid, Signal::Kill);
-    }
-}
-
-enum Signal {
-    Term,
-    Kill,
-}
-
-fn signal_group(pgid: Option<i32>, signal: Signal) {
-    #[cfg(unix)]
-    if let Some(pgid) = pgid.filter(|pgid| *pgid > 0) {
-        let signal = match signal {
-            Signal::Term => libc::SIGTERM,
-            Signal::Kill => libc::SIGKILL,
-        };
-        // SAFETY: signalling the process group acpc created for the agent.
-        unsafe {
-            libc::kill(-pgid, signal);
+        if let Some(mut process) = process {
+            process.wait(Duration::from_secs(1)).await;
+            // The leader may be gone while its children (npx, node, ...) linger.
+            process.terminate(Duration::from_secs(2)).await;
         }
     }
-    #[cfg(not(unix))]
-    let _ = (pgid, signal);
 }
 
 fn elicitation_session(request: &acp::CreateElicitationRequest) -> Option<acp::SessionId> {

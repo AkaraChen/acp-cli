@@ -41,7 +41,7 @@ args = ["-y", "@google/gemini-cli", "--experimental-acp"]
 # MCP servers passed to every session (stdio, or url + transport = "http" | "sse")
 # [[mcp_servers]]
 # name = "files"
-# command = "mcp-files"
+# command = "mcp-files"         # a bare name is looked up on PATH
 ```
 
 acpc has no built-in agents: anything that speaks ACP over stdio works.
@@ -66,7 +66,8 @@ Inside the TUI:
 
 ### Authentication
 
-If the agent answers `auth_required`, acpc runs one of the agent's advertised
+If the agent answers `auth_required` when acpc opens the first session (or,
+for `acpc resume`, lists sessions), acpc runs one of the agent's advertised
 ACP auth methods before the TUI starts: `agent` methods call `authenticate`;
 `terminal` methods run the agent's own command with the method's arguments in
 your terminal. Forms the agent asks for while signing in are answered on the
@@ -102,7 +103,9 @@ just test                        # unit, bridge integration and contract tests
 just smoke                       # drive the real TUI in tmux against the mock agent
 ```
 
-The first build compiles the Codex workspace and takes a while.
+The first build compiles the Codex workspace and takes a while. If
+[mold](https://github.com/rui314/mold) is installed, `just` links with it
+(`mold -run`), which keeps relinking the large TUI binary fast.
 
 Tests:
 

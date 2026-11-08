@@ -1,5 +1,9 @@
 //! Agent-initiated requests shown to the user: permissions and elicitations.
 
+use std::sync::Arc;
+use std::sync::Weak;
+
+use acp_client::AgentConnection;
 use acp_client::PendingRequestId;
 use acp_client::schema as acp;
 use codex_app_server_protocol::AcpcPermissionOption;
@@ -15,14 +19,96 @@ use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
+use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ThreadItemPayload;
 
 use crate::records;
 use crate::server::Bridge;
 use crate::threads::emit_all;
-use crate::threads::PendingKind;
 use crate::tool_calls::ItemKind;
+
+/// Identifies an agent request: request ids restart at 1 on every
+/// connection, so the issuing connection is part of the key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct AgentRequestKey {
+    agent: String,
+    /// The issuing connection's address; [`AgentRequest::connection`] keeps
+    /// it from being reused while the entry exists.
+    connection: usize,
+    id: PendingRequestId,
+}
+
+impl AgentRequestKey {
+    fn new(agent: &str, connection: &Arc<AgentConnection>, id: PendingRequestId) -> Self {
+        Self {
+            agent: agent.to_string(),
+            connection: Arc::as_ptr(connection) as usize,
+            id,
+        }
+    }
+}
+
+/// An agent request shown to the client and not answered yet.
+pub(crate) struct AgentRequest {
+    request_id: RequestId,
+    thread_id: String,
+    kind: PendingKind,
+    /// The turn that abandons it when it ends: only session-scoped requests
+    /// the thread's own agent sends during the thread's turn have one.
+    turn_id: Option<String>,
+    connection: Weak<AgentConnection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingKind {
+    Permission,
+    Elicitation,
+}
+
+/// Answer an agent request nobody will answer anymore, as the spec asks
+/// for abandoned requests (outcome `cancelled` / action `cancel`).
+fn abandon_agent_request(connection: &AgentConnection, id: PendingRequestId, kind: PendingKind) {
+    match kind {
+        PendingKind::Permission => {
+            connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
+        }
+        PendingKind::Elicitation => {
+            connection.respond_elicitation(
+                id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+            );
+        }
+    }
+}
+
+/// Answer the matching requests `cancelled` on the connection that sent
+/// them, then withdraw them from the client.
+fn abandon_where(bridge: &mut Bridge, matches: impl Fn(&AgentRequestKey, &AgentRequest) -> bool) {
+    let abandoned: Vec<_> = bridge
+        .agent_requests
+        .extract_if(|key, request| matches(key, request))
+        .collect();
+    for (key, request) in abandoned {
+        if let Some(connection) = request.connection.upgrade() {
+            abandon_agent_request(&connection, key.id, request.kind);
+        }
+        bridge.resolve_server_request(&request.request_id);
+    }
+}
+
+/// A turn ended: abandon the requests it owns.
+pub(crate) fn abandon_turn_requests(bridge: &mut Bridge, thread_id: &str, turn_id: &str) {
+    abandon_where(bridge, |_, request| {
+        request.thread_id == thread_id && request.turn_id.as_deref() == Some(turn_id)
+    });
+}
+
+/// The agent's connection is gone (exit or restart): abandon everything it
+/// asked.
+pub(crate) fn abandon_agent_requests(bridge: &mut Bridge, agent: &str) {
+    abandon_where(bridge, |key, _| key.agent == agent);
+}
 
 /// What the user picked, independent of how it was presented.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +145,7 @@ pub(crate) fn option_for(options: &[acp::PermissionOption], choice: &Choice) -> 
     })
 }
 
-fn kind_name(kind: &acp::PermissionOptionKind) -> &'static str {
+fn kind_name(kind: acp::PermissionOptionKind) -> &'static str {
     match kind {
         acp::PermissionOptionKind::AllowOnce => "allow_once",
         acp::PermissionOptionKind::AllowAlways => "allow_always",
@@ -78,7 +164,7 @@ fn command_decisions(options: &[acp::PermissionOption]) -> Vec<CommandExecutionA
             option: AcpcPermissionOption {
                 option_id: option.option_id.to_string(),
                 name: option.name.clone(),
-                kind: kind_name(&option.kind).to_string(),
+                kind: kind_name(option.kind).to_string(),
             },
         })
         .chain(std::iter::once(CommandExecutionApprovalDecision::Cancel))
@@ -102,11 +188,12 @@ pub(crate) fn on_permission(
     id: PendingRequestId,
     request: acp::RequestPermissionRequest,
 ) {
-    let connection = bridge.agents.connection(agent);
-    let cancel = |connection: &Option<std::sync::Arc<acp_client::AgentConnection>>| {
-        if let Some(connection) = connection {
-            connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
-        }
+    // Events only arrive from the agent's live connection.
+    let Some(connection) = bridge.agents.connection(agent) else {
+        return;
+    };
+    let cancel = |connection: &AgentConnection| {
+        connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
     };
     let Some(thread) = bridge.threads.by_session_mut(agent, &request.session_id) else {
         cancel(&connection);
@@ -135,12 +222,14 @@ pub(crate) fn on_permission(
     emit_all(bridge, emit);
 
     let options = request.options.clone();
-    let agent_owned = agent.to_string();
+    let key = AgentRequestKey::new(agent, &connection, id);
+    let issuing = Arc::downgrade(&connection);
+    let owner = key.clone();
     let request_id = match kind {
         ItemKind::FileChange if fits_file_change_overlay(&options) => {
             let params = FileChangeRequestApprovalParams {
                 thread_id: thread_id.clone(),
-                turn_id,
+                turn_id: turn_id.clone(),
                 item_id,
                 started_at_ms,
                 reason: Some(title),
@@ -159,7 +248,7 @@ pub(crate) fn on_permission(
                             FileChangeApprovalDecision::Decline => Choice::RejectOnce,
                             FileChangeApprovalDecision::Cancel => Choice::Cancel,
                         });
-                    answer(bridge, &agent_owned, id, &options, &choice);
+                    answer(bridge, &owner, &issuing, &options, &choice);
                 }),
             )
         }
@@ -178,7 +267,7 @@ pub(crate) fn on_permission(
             let params = CommandExecutionRequestApprovalParams {
                 kind: CommandExecutionApprovalKind::Command,
                 thread_id: thread_id.clone(),
-                turn_id,
+                turn_id: turn_id.clone(),
                 item_id,
                 started_at_ms,
                 approval_id: None,
@@ -215,38 +304,34 @@ pub(crate) fn on_permission(
                                 Choice::Option(acp::PermissionOptionId::new(option.option_id))
                             }
                         });
-                    answer(bridge, &agent_owned, id, &options, &choice);
+                    answer(bridge, &owner, &issuing, &options, &choice);
                 }),
             )
         }
     };
-    if let Some(active) = bridge
-        .threads
-        .get_mut(&thread_id)
-        .and_then(|thread| thread.active.as_mut())
-    {
-        active.pending.insert(id, (request_id, PendingKind::Permission));
-    }
+    bridge.agent_requests.insert(
+        key,
+        AgentRequest {
+            request_id,
+            thread_id,
+            kind: PendingKind::Permission,
+            turn_id: Some(turn_id),
+            connection: Arc::downgrade(&connection),
+        },
+    );
 }
 
-/// Send the user's choice to the agent.
-pub(crate) fn answer(
+/// Send the user's choice to the agent that asked.
+fn answer(
     bridge: &mut Bridge,
-    agent: &str,
-    id: PendingRequestId,
+    key: &AgentRequestKey,
+    issuing: &Weak<AgentConnection>,
     options: &[acp::PermissionOption],
     choice: &Choice,
 ) {
-    // The thread must be found before the request is forgotten.
-    let thread_id = bridge.threads.on_agent(agent).into_iter().find(|thread_id| {
-        bridge
-            .threads
-            .get(thread_id)
-            .and_then(|thread| thread.active.as_ref())
-            .is_some_and(|active| active.pending.contains_key(&id))
-    });
-    forget_pending(bridge, agent, id);
-    let Some(connection) = bridge.agents.connection(agent) else {
+    let request = bridge.agent_requests.remove(key);
+    // A dead connection has nobody left to answer.
+    let Some(connection) = issuing.upgrade() else {
         return;
     };
     let outcome = match option_for(options, choice) {
@@ -257,37 +342,25 @@ pub(crate) fn answer(
     };
     if *choice == Choice::Cancel {
         // "Stop": answer this request cancelled, then cancel its turn.
-        connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
-        if let Some(thread_id) = thread_id {
-            let _ = crate::threads::interrupt(bridge, &thread_id);
+        connection.respond_permission(key.id, acp::RequestPermissionOutcome::Cancelled);
+        if let Some(request) = request {
+            let _ = crate::threads::interrupt(bridge, &request.thread_id);
         }
         return;
     }
-    connection.respond_permission(id, outcome);
+    connection.respond_permission(key.id, outcome);
 }
 
-fn forget_pending(bridge: &mut Bridge, agent: &str, id: PendingRequestId) {
-    for thread_id in bridge.threads.on_agent(agent) {
-        if let Some(active) = bridge
-            .threads
-            .get_mut(&thread_id)
-            .and_then(|thread| thread.active.as_mut())
-        {
-            active.pending.remove(&id);
-        }
-    }
-}
-
+/// The agent answered or withdrew a request without the user.
 pub(crate) fn on_pending_resolved(bridge: &mut Bridge, agent: &str, id: PendingRequestId) {
-    for thread_id in bridge.threads.on_agent(agent) {
-        let request_id = bridge
-            .threads
-            .get_mut(&thread_id)
-            .and_then(|thread| thread.active.as_mut())
-            .and_then(|active| active.pending.remove(&id));
-        if let Some((request_id, _)) = request_id {
-            bridge.resolve_server_request(&request_id);
-        }
+    let Some(connection) = bridge.agents.connection(agent) else {
+        return;
+    };
+    if let Some(request) = bridge
+        .agent_requests
+        .remove(&AgentRequestKey::new(agent, &connection, id))
+    {
+        bridge.resolve_server_request(&request.request_id);
     }
 }
 
@@ -309,23 +382,26 @@ pub(crate) fn on_elicitation(
     id: PendingRequestId,
     request: acp::CreateElicitationRequest,
 ) {
+    // Events only arrive from the agent's live connection.
+    let Some(connection) = bridge.agents.connection(agent) else {
+        return;
+    };
     // A request the user never saw is cancelled, never declined on their
     // behalf.
-    let cancel = |bridge: &Bridge| {
-        if let Some(connection) = bridge.agents.connection(agent) {
-            connection.respond_elicitation(
-                id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
-            );
-        }
+    let cancel = || {
+        connection.respond_elicitation(
+            id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+        );
     };
     // Session-scoped requests belong to their thread. Request-scoped ones
     // (sign-in, setup) have none; the TUI only shows requests on a thread,
     // so they go to the most recently active loaded thread.
-    let thread_id = match elicitation_session(&request) {
+    let session_scoped = elicitation_session(&request);
+    let thread_id = match &session_scoped {
         Some(session_id) => bridge
             .threads
-            .by_session_mut(agent, &session_id)
+            .by_session_mut(agent, session_id)
             .filter(|thread| {
                 !thread
                     .active
@@ -336,12 +412,15 @@ pub(crate) fn on_elicitation(
         None => bridge.threads.most_recent_loaded(),
     };
     let Some(thread_id) = thread_id else {
-        cancel(bridge);
+        cancel();
         return;
     };
+    // Only a session-scoped request belongs to its thread's running turn;
+    // a request-scoped one outlives whatever turn its thread has.
     let turn_id = bridge
         .threads
         .get(&thread_id)
+        .filter(|_| session_scoped.is_some())
         .and_then(|thread| thread.active.as_ref())
         .map(|active| active.builder.id.clone());
     let server_name = bridge
@@ -354,7 +433,7 @@ pub(crate) fn on_elicitation(
                 mcp_schema(&form.requested_schema, &request.message)
             else {
                 tracing::warn!(%agent, "elicitation schema cannot be shown; cancelling");
-                cancel(bridge);
+                cancel();
                 return;
             };
             McpServerElicitationRequest::Form {
@@ -370,22 +449,24 @@ pub(crate) fn on_elicitation(
             elicitation_id: url.elicitation_id.to_string(),
         },
         _ => {
-            cancel(bridge);
+            cancel();
             return;
         }
     };
     let params = McpServerElicitationRequestParams {
         thread_id: thread_id.clone(),
-        turn_id,
+        turn_id: turn_id.clone(),
         server_name,
         request: elicitation,
     };
-    let agent_owned = agent.to_string();
+    let key = AgentRequestKey::new(agent, &connection, id);
+    let owner = key.clone();
+    let issuing = Arc::downgrade(&connection);
     let request_id = bridge.request(
         Some(thread_id.clone()),
         |request_id| ServerRequest::McpServerElicitationRequest { request_id, params },
         Box::new(move |bridge, result| {
-            forget_pending(bridge, &agent_owned, id);
+            bridge.agent_requests.remove(&owner);
             let action = result
                 .ok()
                 .and_then(|value| serde_json::from_value::<McpServerElicitationRequestResponse>(value).ok())
@@ -400,18 +481,22 @@ pub(crate) fn on_elicitation(
                     McpServerElicitationAction::Decline => acp::ElicitationAction::Decline,
                     McpServerElicitationAction::Cancel => acp::ElicitationAction::Cancel,
                 });
-            if let Some(connection) = bridge.agents.connection(&agent_owned) {
+            // Only the connection that asked; a dead one has nobody left.
+            if let Some(connection) = issuing.upgrade() {
                 connection.respond_elicitation(id, acp::CreateElicitationResponse::new(action));
             }
         }),
     );
-    if let Some(active) = bridge
-        .threads
-        .get_mut(&thread_id)
-        .and_then(|thread| thread.active.as_mut())
-    {
-        active.pending.insert(id, (request_id, PendingKind::Elicitation));
-    }
+    bridge.agent_requests.insert(
+        key,
+        AgentRequest {
+            request_id,
+            thread_id,
+            kind: PendingKind::Elicitation,
+            turn_id,
+            connection: Arc::downgrade(&connection),
+        },
+    );
 }
 
 /// The ACP form schema as the TUI's MCP-style schema. ACP adds a few
@@ -526,7 +611,7 @@ mod tests {
         ];
         assert!(fits_file_change_overlay(&canonical));
         assert!(!fits_file_change_overlay(&canonical[..2]));
-        let mut doubled = canonical.clone();
+        let mut doubled = canonical;
         doubled.push(option("a2", acp::PermissionOptionKind::AllowAlways));
         assert!(!fits_file_change_overlay(&doubled));
     }

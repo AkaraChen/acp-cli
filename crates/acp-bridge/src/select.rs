@@ -69,6 +69,10 @@ fn probe(bridge: &mut Bridge, slug: String, reply: Reply, attempts: u32) {
             bridge.spawn(async move {
                 let result = connection.new_session(request).await;
                 move |bridge: &mut Bridge| match result {
+                    // The session died with its process.
+                    Ok(_) if !bridge.agents.is_live(&slug, &connection) => {
+                        reply.error(bridge, format!("agent `{slug}` exited; try again"));
+                    }
                     Ok(session) => {
                         bridge.agents.set_prepared(&slug, cwd, session);
                         bridge.agents.current = slug;
@@ -204,7 +208,7 @@ fn terminal_sign_in(
     for (name, value) in &auth.command.env {
         env.insert(name.clone(), Some(value.clone()));
     }
-    let title = format!("Sign in to {}: {}", profile.name, auth.method_name);
+    let title = format!("Sign in to {}: {}", profile.name, printable(&auth.method_name));
     // authentication.mdx: confirm risky environment overrides first.
     let confirm = (!auth.sensitive_env.is_empty()).then(|| {
         let overrides: Vec<String> = auth
@@ -212,7 +216,7 @@ fn terminal_sign_in(
             .env
             .iter()
             .filter(|(name, _)| auth.sensitive_env.contains(name))
-            .map(|(name, value)| format!("  {name}={value}"))
+            .map(|(name, value)| format!("  {}={}", printable(name), printable(value)))
             .collect();
         format!(
             "The agent asks to set these environment variables for its sign-in command:\n{}",
@@ -260,4 +264,33 @@ fn terminal_sign_in(
             });
         }),
     );
+}
+
+/// Agent-supplied text for a terminal prompt: control characters (escape
+/// sequences, carriage returns, newlines) are shown escaped, so they cannot
+/// rewrite what the user is asked to confirm.
+fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '"' | '\'' | '\\' => out.push(c),
+            c => out.extend(c.escape_debug()),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn printable_escapes_control_characters_only() {
+        assert_eq!(
+            printable("/tmp/evil:\u{1b}[2K\r  PATH=/usr/bin\n"),
+            "/tmp/evil:\\u{1b}[2K\\r  PATH=/usr/bin\\n"
+        );
+        assert_eq!(printable(r#"C:\a "b" é"#), r#"C:\a "b" é"#);
+    }
 }

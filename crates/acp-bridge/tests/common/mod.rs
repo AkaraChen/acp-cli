@@ -3,10 +3,13 @@
 //! Build the mock agent first (`cargo build -p acpc-mock-agent`); the
 //! harness finds it next to the test executable's target directory.
 
-#![allow(dead_code)]
+#![allow(clippy::expect_used, dead_code)]
 
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use acp_bridge::AgentProfile;
@@ -53,6 +56,7 @@ pub struct Harness {
     shutdown: CancellationToken,
     pub state_dir: tempfile::TempDir,
     pub cwd: tempfile::TempDir,
+    pub resumable: Arc<Mutex<HashSet<String>>>,
 }
 
 pub struct HarnessConfig {
@@ -61,6 +65,8 @@ pub struct HarnessConfig {
     pub agents: Vec<(String, String)>,
     /// Per-agent scenarios, by slug.
     pub agent_scenarios: Vec<(String, Value)>,
+    /// The client runs terminal sign-in (`acpc/terminal/run`).
+    pub terminal_auth: bool,
 }
 
 impl Default for HarnessConfig {
@@ -69,6 +75,7 @@ impl Default for HarnessConfig {
             scenario: None,
             agents: vec![("mock".to_string(), "Mock".to_string())],
             agent_scenarios: Vec::new(),
+            terminal_auth: false,
         }
     }
 }
@@ -122,11 +129,13 @@ impl Harness {
                 name: "acpc-test".to_string(),
                 title: None,
                 version: "0.0.0".to_string(),
-                terminal_auth: false,
+                terminal_auth: config.terminal_auth,
             },
             mcp_servers: Vec::new(),
             user_agent: "acpc/0.0.0".to_string(),
+            resumable: Arc::default(),
         };
+        let resumable = Arc::clone(&options.resumable);
         let (tx, events) = mpsc::channel(128);
         let shutdown = CancellationToken::new();
         acp_bridge::start(options, BridgeTransport::Channel(events), None, shutdown.clone())
@@ -151,6 +160,7 @@ impl Harness {
             shutdown,
             state_dir,
             cwd,
+            resumable,
         };
         harness
             .request("initialize", json!({"clientInfo": {"name": "test", "version": "0"}}))
@@ -203,8 +213,8 @@ impl Harness {
         id
     }
 
-    /// The result (or error object) for request `id`. Notifications and
-    /// server requests received meanwhile are kept for `next`.
+    /// The result (or error object) for request `id`. Other messages
+    /// received meanwhile (other responses included) are kept for later.
     pub async fn response(&mut self, id: i64) -> Result<Value, Value> {
         let method = self
             .methods
@@ -212,17 +222,23 @@ impl Harness {
             .find(|(sent, _)| *sent == id)
             .map(|(_, method)| method.clone())
             .unwrap_or_default();
-        loop {
-            let message = self.recv().await;
-            if message.get("method").is_none() && message.get("id") == Some(&json!(id)) {
-                if let Some(result) = message.get("result") {
-                    assert_response_decodes(&method, id, result);
-                    return Ok(result.clone());
+        let is_response =
+            |message: &Value| message.get("method").is_none() && message.get("id") == Some(&json!(id));
+        let message = match self.pending.iter().position(is_response) {
+            Some(index) => self.pending.remove(index).expect("index"),
+            None => loop {
+                let message = self.recv().await;
+                if is_response(&message) {
+                    break message;
                 }
-                return Err(message.get("error").cloned().unwrap_or(Value::Null));
-            }
-            self.pending.push_back(message);
+                self.pending.push_back(message);
+            },
+        };
+        if let Some(result) = message.get("result") {
+            assert_response_decodes(&method, id, result);
+            return Ok(result.clone());
         }
+        Err(message.get("error").cloned().unwrap_or(Value::Null))
     }
 
     /// Send a request and return its result (or error object).
@@ -298,6 +314,15 @@ impl Harness {
     pub async fn start_thread(&mut self) -> String {
         let result = self
             .request("thread/start", json!({}))
+            .await
+            .expect("thread/start");
+        result["thread"]["id"].as_str().expect("thread id").to_string()
+    }
+
+    /// Start a thread on `agent` instead of the current one.
+    pub async fn start_thread_on(&mut self, agent: &str) -> String {
+        let result = self
+            .request("thread/start", json!({"config": {"acpc.agent": agent}}))
             .await
             .expect("thread/start");
         result["thread"]["id"].as_str().expect("thread id").to_string()

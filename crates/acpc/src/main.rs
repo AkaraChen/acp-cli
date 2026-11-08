@@ -154,6 +154,7 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
         profile.command.cwd = Some(cwd.clone());
     }
     let interactive = !matches!(cli.command, Some(Command::AppServer));
+    let resumable = std::sync::Arc::default();
     let options = BridgeOptions {
         agents,
         default_agent: agent.clone(),
@@ -162,6 +163,7 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
         client: client_options(interactive),
         mcp_servers: config.mcp_servers(),
         user_agent: format!("acpc/{} (acpc {ACPC_VERSION})", env!("CARGO_PKG_VERSION")),
+        resumable: std::sync::Arc::clone(&resumable),
     };
     let shutdown = CancellationToken::new();
 
@@ -226,7 +228,13 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
         }
         ExitReason::UserRequested | ExitReason::TurnInterrupted => 0,
     };
-    if let Some(thread_id) = exit.thread_id {
+    // Only a session its agent can list and reopen can be resumed.
+    let thread_id = exit.thread_id.filter(|thread_id| {
+        resumable
+            .lock()
+            .is_ok_and(|ids| ids.contains(&thread_id.to_string()))
+    });
+    if let Some(thread_id) = thread_id {
         let color = std::io::stdout().is_terminal();
         let command = format!("acpc resume {thread_id}");
         let command = if color {
@@ -260,6 +268,7 @@ async fn connect_initial_agent(
     let connected = auth::connect_with_auth(
         profile,
         &options.client,
+        options.default_cwd.as_path(),
         prepare_session.then_some(request),
         force_login,
     )

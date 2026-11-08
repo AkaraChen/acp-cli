@@ -81,6 +81,14 @@ impl Agents {
         }
     }
 
+    /// Whether `connection` is still the agent's running connection.
+    pub(crate) fn is_live(&self, slug: &str, connection: &Arc<AgentConnection>) -> bool {
+        matches!(
+            self.slots.get(slug).map(|slot| &slot.state),
+            Some(SlotState::Ready(live)) if Arc::ptr_eq(live, connection)
+        )
+    }
+
     pub(crate) fn is_current(&self, slug: &str, generation: u64) -> bool {
         self.slots
             .get(slug)

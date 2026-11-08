@@ -68,9 +68,15 @@ fn register_listed(
     Some(id)
 }
 
+/// Pages `--last` reads before picking the newest session: agents need not
+/// list newest first.
+const LAST_PAGES: usize = 10;
+
 /// `thread/list` → `session/list` on the current agent.
 pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, params: ThreadListParams) {
     let agent = bridge.agents.current.clone();
+    // `--last` asks for one thread from the start of the list.
+    let last = params.limit == Some(1) && params.cursor.is_none();
     // session/list filters by one cwd; several (a repository's checkouts)
     // are filtered here. No filter lists everything.
     let (cwd, cwds) = match params.cwd {
@@ -112,8 +118,9 @@ pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, param
             if let Some(cursor) = cursor {
                 request = request.cursor(cursor);
             }
+            let pages = if last { LAST_PAGES } else { 1 };
             bridge.spawn(async move {
-                let result = connection.list_sessions(request).await;
+                let result = list_pages(&connection, request, pages).await;
                 Box::new(move |bridge: &mut Bridge| match result {
                     Ok(response) => {
                         let agent_name =
@@ -124,6 +131,7 @@ pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, param
                             else {
                                 continue;
                             };
+                            crate::threads::note_resumable(bridge, &thread_id, &connection);
                             if let Some(thread) = bridge.threads.get(&thread_id) {
                                 let in_cwds = cwds.as_ref().is_none_or(|cwds| {
                                     let cwd = thread.cwd.as_path().display().to_string();
@@ -137,21 +145,24 @@ pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, param
                                             })
                                     });
                                 if matches {
-                                    data.push(records::thread(thread, false));
+                                    let updated_at = parse_time(info.updated_at.as_deref());
+                                    data.push((updated_at, records::thread(thread, false)));
                                 }
                             }
                         }
-                        // Most recent first, as the picker and `--last` expect.
+                        // Most recent first, as the picker and `--last` expect;
+                        // sessions the agent gave no time for go last.
                         // The agent sizes pages; `limit` is not applied, since
                         // dropping part of a page would skip it for good.
-                        data.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                        data.sort_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
+                        let data = data.into_iter().map(|(_, thread)| thread).collect();
                         bridge.respond(
                             conn,
                             id,
                             ThreadListResponse {
                                 data,
                                 read_states: None,
-                                next_cursor: response.next_cursor,
+                                next_cursor: if last { None } else { response.next_cursor },
                                 backwards_cursor: None,
                             },
                         );
@@ -161,6 +172,24 @@ pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, param
             });
         }),
     );
+}
+
+/// Up to `pages` pages of `session/list`, as one response.
+async fn list_pages(
+    connection: &AgentConnection,
+    request: acp::ListSessionsRequest,
+    pages: usize,
+) -> Result<acp::ListSessionsResponse, acp_client::AcpError> {
+    let mut response = connection.list_sessions(request.clone()).await?;
+    for _ in 1..pages {
+        let Some(cursor) = response.next_cursor.take().filter(|cursor| !cursor.is_empty()) else {
+            break;
+        };
+        let next = connection.list_sessions(request.clone().cursor(cursor)).await?;
+        response.sessions.extend(next.sessions);
+        response.next_cursor = next.next_cursor;
+    }
+    Ok(response)
 }
 
 type Located = Box<dyn FnOnce(&mut Bridge, Result<(), String>) + Send>;
@@ -214,7 +243,9 @@ fn search(
                 move |bridge: &mut Bridge| match found {
                     Ok(Some(info)) => {
                         let name = crate::threads::agent_display_name(bridge, &agent, &connection);
-                        register_listed(bridge, &agent, &name, &info);
+                        if let Some(thread_id) = register_listed(bridge, &agent, &name, &info) {
+                            crate::threads::note_resumable(bridge, &thread_id, &connection);
+                        }
                         then(bridge, Ok(()));
                     }
                     Ok(None) => search(bridge, thread_id, slugs, error, then),
@@ -281,19 +312,24 @@ pub(crate) fn resume(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, thr
                 return;
             }
             if thread.loaded {
-                let response = records::thread_resume_response(thread);
-                bridge.respond(conn, id, response);
-                if let Some(thread) = bridge.threads.get(&key) {
-                    crate::ext::thread_state(bridge, thread);
-                }
-                // Approvals the client dropped while it was elsewhere.
-                bridge.resend_server_requests(conn, &key);
+                respond_loaded(bridge, conn, id, &key);
                 return;
             }
             let agent = thread.agent.clone();
             attach(bridge, conn, id, agent, key);
         }),
     );
+}
+
+/// Answer a resume of a thread that is already open.
+fn respond_loaded(bridge: &Bridge, conn: ConnectionId, id: RequestId, thread_id: &str) {
+    let Some(thread) = bridge.threads.get(thread_id) else {
+        return;
+    };
+    bridge.respond(conn, id, records::thread_resume_response(thread));
+    crate::ext::thread_state(bridge, thread);
+    // Approvals the client dropped while it was elsewhere.
+    bridge.resend_server_requests(conn, thread_id);
 }
 
 async fn find_session(
@@ -340,6 +376,16 @@ fn attach(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, agent: String,
                 bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {thread_id}"));
                 return;
             };
+            // Checked again: another resume may have opened it while the
+            // agent was starting.
+            if thread.replay.is_some() {
+                bridge.respond_error(conn, id, INVALID_REQUEST, "this session is already being opened");
+                return;
+            }
+            if thread.loaded {
+                respond_loaded(bridge, conn, id, &thread_id);
+                return;
+            }
             let Some(session_id) = thread.session_id.clone() else {
                 bridge.respond_error(conn, id, INVALID_REQUEST, "thread has no session");
                 return;
@@ -393,6 +439,14 @@ fn resume_without_history(
     bridge.spawn(async move {
         let result = connection.resume_session(request).await;
         Box::new(move |bridge: &mut Bridge| {
+            let Some(agent) = bridge.threads.get(&thread_id).map(|thread| thread.agent.clone()) else {
+                return;
+            };
+            // The session died with its process; leave the thread unloaded.
+            if result.is_ok() && !bridge.agents.is_live(&agent, &connection) {
+                bridge.respond_error(conn, id, INTERNAL_ERROR, format!("agent `{agent}` exited; try again"));
+                return;
+            }
             let Some(thread) = bridge.threads.get_mut(&thread_id) else {
                 return;
             };

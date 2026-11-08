@@ -10,21 +10,24 @@ loop, so the bridge can ask the user to pick a sign-in method
 (acpc/auth/select) and run a terminal sign-in command with the TUI's
 terminal (acpc/terminal/run) while it is pending.
 ---
- codex-rs/tui/src/acpc.rs                      |  53 ++++
+ codex-rs/tui/src/acpc.rs                      | 111 +++++++
  codex-rs/tui/src/app.rs                       |   1 +
- codex-rs/tui/src/app/acpc.rs                  | 199 +++++++++++++
+ codex-rs/tui/src/app/acpc.rs                  | 258 +++++++++++++++++
  codex-rs/tui/src/app/app_server_events.rs     |   3 +
  codex-rs/tui/src/app/event_dispatch.rs        |   3 +
+ codex-rs/tui/src/app/tests/startup.rs         |  27 ++
+ codex-rs/tui/src/app/thread_routing.rs        |   5 +-
  codex-rs/tui/src/app_event.rs                 |   2 +
  codex-rs/tui/src/chatwidget/acpc.rs           | 271 +++++++++++++++++-
  codex-rs/tui/src/chatwidget/interaction.rs    |   8 +
  codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
+ codex-rs/tui/src/lib.rs                       |  29 +-
  codex-rs/tui/src/slash_command.rs             |   9 +
- 10 files changed, 552 insertions(+), 1 deletion(-)
+ 13 files changed, 726 insertions(+), 5 deletions(-)
  create mode 100644 codex-rs/tui/src/app/acpc.rs
 
 diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
-index f919f8d..8fb3741 100644
+index f919f8d..9e01824 100644
 --- a/codex-rs/tui/src/acpc.rs
 +++ b/codex-rs/tui/src/acpc.rs
 @@ -84,6 +84,8 @@ pub(crate) fn builtin_allowed(command: crate::slash_command::SlashCommand) -> bo
@@ -36,10 +39,36 @@ index f919f8d..8fb3741 100644
              | SlashCommand::Keymap
              | SlashCommand::Vim
              | SlashCommand::New
-@@ -122,3 +124,54 @@ pub(crate) fn agent_shadows<'a>(
+@@ -122,3 +124,112 @@ pub(crate) fn agent_shadows<'a>(
  ) -> bool {
      enabled() && !is_reserved(name) && agent_commands.any(|command| command == name)
  }
++
++/// Why `acpc resume <id>` cannot open a session. The bridge's own message
++/// (sign-in needed, no agent has the session, ...) replaces Codex's.
++pub(crate) fn missing_session_message(
++    id: &str,
++    action: &str,
++    lookup_error: Option<&color_eyre::Report>,
++) -> String {
++    let Some(err) = lookup_error else {
++        return format!(
++            "No saved session found with ID {id}. Run `acpc {action}` without an ID to choose from existing sessions."
++        );
++    };
++    let reason = err
++        .chain()
++        .find_map(|cause| {
++            match cause.downcast_ref::<codex_app_server_client::TypedRequestError>()? {
++                codex_app_server_client::TypedRequestError::Server { source, .. } => {
++                    Some(source.message.clone())
++                }
++                other => Some(other.to_string()),
++            }
++        })
++        .unwrap_or_else(|| format!("{err:#}"));
++    format!("acpc could not open session {id}: {reason}")
++}
 +
 +/// App-level acpc actions, sent from pickers and server requests.
 +#[derive(Debug)]
@@ -91,6 +120,38 @@ index f919f8d..8fb3741 100644
 +pub(crate) fn take_reply(key: u64) -> Option<codex_app_server_client::AppServerReplyHandle> {
 +    pending_replies().remove(&key)
 +}
++
++#[cfg(test)]
++mod tests {
++    use super::missing_session_message;
++    use codex_app_server_client::TypedRequestError;
++    use codex_app_server_protocol::JSONRPCErrorError;
++    use color_eyre::eyre::WrapErr;
++    use pretty_assertions::assert_eq;
++
++    #[test]
++    fn missing_session_message_shows_the_bridge_error() {
++        let err = Err::<(), _>(TypedRequestError::Server {
++            method: "thread/read".to_string(),
++            source: JSONRPCErrorError {
++                code: -32600,
++                data: None,
++                message: "agent `mock` requires sign-in; run `acpc login -a mock`".to_string(),
++            },
++        })
++        .wrap_err("thread/read failed during TUI session lookup")
++        .unwrap_err();
++
++        assert_eq!(
++            missing_session_message("abc", "resume", Some(&err)),
++            "acpc could not open session abc: agent `mock` requires sign-in; run `acpc login -a mock`"
++        );
++        assert_eq!(
++            missing_session_message("abc", "resume", /*lookup_error*/ None),
++            "No saved session found with ID abc. Run `acpc resume` without an ID to choose from existing sessions."
++        );
++    }
++}
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
 index 84a42c3..d9b88ce 100644
 --- a/codex-rs/tui/src/app.rs
@@ -105,10 +166,10 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..e3598fd
+index 0000000..5ee3a3d
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,258 @@
 +//! acpc: app-level handling of ACP agent switching, session options and
 +//! sign-in (see `crate::acpc`).
 +
@@ -262,21 +323,28 @@ index 0000000..e3598fd
 +/// sign-in), then take it back.
 +async fn run_in_terminal(tui: &mut tui::Tui, params: &AcpcTerminalRunParams) -> std::io::Result<Option<i32>> {
 +    tui.with_restored(tui::TerminalHandoff::Restore, || async {
++        // Ctrl+C reaches the whole foreground group once raw mode is off;
++        // catch it before then so it can never kill acpc.
++        #[cfg(unix)]
++        let mut interrupts =
++            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
++        #[cfg(windows)]
++        let mut interrupts = tokio::signal::windows::ctrl_c()?;
 +        crossterm::terminal::disable_raw_mode()?;
-+        // Nothing is drawn during the handoff; tell the user what runs.
-+        println!("\n{}", params.title);
-+        println!("$ {} {}\n", params.command, params.args.join(" "));
++        // Nothing is drawn during the handoff; tell the user what runs. The
++        // text comes from the agent, so it must not drive the terminal.
++        println!("\n{}", escape_controls(&params.title));
++        let command_line = format!("{} {}", params.command, params.args.join(" "));
++        println!("$ {}\n", escape_controls(&command_line));
 +        if let Some(question) = &params.confirm {
-+            println!("{question}");
++            println!("{}", escape_controls(question));
 +            print!("Continue? [y/N] ");
 +            std::io::Write::flush(&mut std::io::stdout())?;
-+            let answer = tokio::task::spawn_blocking(|| {
-+                let mut line = String::new();
-+                std::io::stdin().read_line(&mut line).map(|_| line)
-+            })
-+            .await
-+            .map_err(std::io::Error::other)??;
-+            if !matches!(answer.trim(), "y" | "Y" | "yes") {
++            let confirmed = tokio::task::spawn_blocking(read_confirmation)
++                .await
++                .map_err(std::io::Error::other)??;
++            println!("{}", if confirmed { "y" } else { "n" });
++            if !confirmed {
 +                return Ok(None);
 +            }
 +        }
@@ -292,21 +360,73 @@ index 0000000..e3598fd
 +            command.current_dir(cwd);
 +        }
 +        let mut child = command.spawn()?;
-+        // Ctrl+C reaches the whole foreground group; keep it from killing
-+        // the TUI while the child handles it.
-+        let ctrl_c = tokio::signal::ctrl_c();
-+        tokio::pin!(ctrl_c);
++        // The child handles Ctrl+C; acpc ignores it until the child exits.
 +        let status = loop {
 +            tokio::select! {
 +                status = child.wait() => break status?,
-+                _ = &mut ctrl_c => {
-+                    ctrl_c.set(tokio::signal::ctrl_c());
-+                }
++                _ = interrupts.recv() => {}
 +            }
 +        };
 +        Ok(status.code())
 +    })
 +    .await
++}
++
++/// Read the y/N answer as a single key in raw mode, so Ctrl+C is a key
++/// rather than a signal. Only `y` confirms; anything else (Enter, Esc, `n`,
++/// Ctrl+C, Ctrl+D) declines.
++fn read_confirmation() -> std::io::Result<bool> {
++    use crossterm::event::Event;
++    use crossterm::event::KeyCode;
++    use crossterm::event::KeyEventKind;
++    use crossterm::event::KeyModifiers;
++
++    crossterm::terminal::enable_raw_mode()?;
++    let answer = (|| {
++        // Keys typed before the prompt must not answer it.
++        crate::tui::discard_pending_terminal_input()?;
++        loop {
++            if let Event::Key(key) = crossterm::event::read()?
++                && key.kind != KeyEventKind::Release
++            {
++                return Ok(matches!(key.code, KeyCode::Char('y' | 'Y'))
++                    && !key
++                        .modifiers
++                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT));
++            }
++        }
++    })();
++    crossterm::terminal::disable_raw_mode()?;
++    answer
++}
++
++/// Agent-supplied text with control characters (other than newlines)
++/// escaped, so it cannot move the cursor or erase what is shown.
++fn escape_controls(text: &str) -> String {
++    text.chars()
++        .map(|c| {
++            if c.is_control() && c != '\n' {
++                c.escape_default().to_string()
++            } else {
++                c.to_string()
++            }
++        })
++        .collect()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::escape_controls;
++    use pretty_assertions::assert_eq;
++
++    #[test]
++    fn escape_controls_keeps_newlines_and_escapes_the_rest() {
++        assert_eq!(
++            escape_controls("  PATH=/tmp/evil:\u{1b}[2K\r  PATH=/usr/bin\n  HOME=\u{9b}x\t"),
++            "  PATH=/tmp/evil:\\u{1b}[2K\\r  PATH=/usr/bin\n  HOME=\\u{9b}x\\t"
++        );
++        assert_eq!(escape_controls("Sign in to Ünïcode"), "Sign in to Ünïcode");
++    }
 +}
 diff --git a/codex-rs/tui/src/app/app_server_events.rs b/codex-rs/tui/src/app/app_server_events.rs
 index 493628a..3bc7ed3 100644
@@ -336,6 +456,60 @@ index 3881aac..b3687df 100644
              AppEvent::ArchiveCurrentThread => {
                  return self.archive_current_thread(tui, app_server).await;
              }
+diff --git a/codex-rs/tui/src/app/tests/startup.rs b/codex-rs/tui/src/app/tests/startup.rs
+index 04d2c4e..dd9ff90 100644
+--- a/codex-rs/tui/src/app/tests/startup.rs
++++ b/codex-rs/tui/src/app/tests/startup.rs
+@@ -1865,6 +1865,33 @@ async fn ignore_same_thread_resume_reports_noop_for_current_thread() {
+     )));
+ }
+ 
++#[tokio::test]
++async fn ignore_same_thread_resume_resumes_current_thread_in_acpc_mode() {
++    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
++    let thread_id = ThreadId::new();
++    let session = test_thread_session(thread_id, test_path_buf("/tmp/project"));
++    app.chat_widget.handle_thread_session(session.clone());
++    app.thread_event_channels.insert(
++        thread_id,
++        ThreadEventChannel::new_with_session(THREAD_EVENT_CHANNEL_CAPACITY, session, Vec::new()),
++    );
++    app.activate_thread_channel(thread_id).await;
++    while app_event_rx.try_recv().is_ok() {}
++    let _acpc = crate::acpc::enable_for_test();
++
++    // The agent may have restarted since; only thread/resume reopens it.
++    let ignored = app.ignore_same_thread_resume(&crate::resume_picker::SessionTarget {
++        backend_id: crate::backend_id::BackendId::new(),
++        path: Some(test_path_buf("/tmp/project")),
++        thread_id,
++        cwd: None,
++        history_mode: None,
++    });
++
++    assert!(!ignored);
++    assert!(app_event_rx.try_recv().is_err());
++}
++
+ #[tokio::test]
+ async fn ignore_same_thread_resume_allows_reattaching_displayed_inactive_thread() {
+     let mut app = make_test_app().await;
+diff --git a/codex-rs/tui/src/app/thread_routing.rs b/codex-rs/tui/src/app/thread_routing.rs
+index ccd5d3f..3bc1196 100644
+--- a/codex-rs/tui/src/app/thread_routing.rs
++++ b/codex-rs/tui/src/app/thread_routing.rs
+@@ -262,7 +262,10 @@ impl App {
+         &mut self,
+         target_session: &crate::resume_picker::SessionTarget,
+     ) -> bool {
+-        if self.chat_widget.has_provider_error()
++        // acpc: the agent may have restarted since the thread was opened, so
++        // only thread/resume reopens its session.
++        if crate::acpc::enabled()
++            || self.chat_widget.has_provider_error()
+             || self.active_thread_id != Some(target_session.thread_id)
+             || self
+                 .thread_event_channels
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
 index 07f509d..f0a625a 100644
 --- a/codex-rs/tui/src/app_event.rs
@@ -680,6 +854,92 @@ index 479f167..2416e3c 100644
              SlashCommand::Cd => match self.thread_id {
                  Some(thread_id) if self.can_change_working_directory(thread_id) => QueueDrain::Stop,
                  _ => QueueDrain::Continue,
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index 5dd2826..a8679be 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -855,6 +855,10 @@ async fn lookup_session_target_with_app_server(
+                     %err,
+                     "thread/read failed during TUI session lookup"
+                 );
++                // acpc: the bridge's error says why (sign-in, no such session, ...).
++                if crate::acpc::enabled() {
++                    return Err(err);
++                }
+                 Ok(None)
+             }
+         };
+@@ -1610,6 +1614,7 @@ async fn run_ratatui_app(
+     let missing_session_exit =
+         |id_str: &str,
+          action: &str,
++         lookup_error: Option<color_eyre::Report>,
+          tui: &mut Tui,
+          terminal_restore_guard: &mut TerminalRestoreGuard| {
+             error!("Error finding conversation path: {id_str}");
+@@ -1622,9 +1627,13 @@ async fn run_ratatui_app(
+                 resume_hint: None,
+                 disconnect_info: None,
+                 update_action: None,
+-                exit_reason: ExitReason::Fatal(format!(
+-                    "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
+-                )),
++                exit_reason: ExitReason::Fatal(if crate::acpc::enabled() {
++                    crate::acpc::missing_session_message(id_str, action, lookup_error.as_ref())
++                } else {
++                    format!(
++                        "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
++                    )
++                }),
+             })
+         };
+ 
+@@ -1672,6 +1681,7 @@ async fn run_ratatui_app(
+                     return missing_session_exit(
+                         id_str,
+                         "fork",
++                        /*lookup_error*/ None,
+                         &mut tui,
+                         &mut terminal_restore_guard,
+                     );
+@@ -1763,6 +1773,16 @@ async fn run_ratatui_app(
+             )
+             .await;
+         let target_session = match lookup {
++            Ok(Err(err)) if crate::acpc::enabled() => {
++                shutdown_app_server_if_present(app_server.take()).await;
++                return missing_session_exit(
++                    id_str,
++                    "resume",
++                    Some(err),
++                    &mut tui,
++                    &mut terminal_restore_guard,
++                );
++            }
+             Ok(result) => result?,
+             Err(err) => {
+                 shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
+@@ -1776,6 +1796,7 @@ async fn run_ratatui_app(
+                 return missing_session_exit(
+                     id_str,
+                     "resume",
++                    /*lookup_error*/ None,
+                     &mut tui,
+                     &mut terminal_restore_guard,
+                 );
+@@ -2036,10 +2057,12 @@ async fn run_ratatui_app(
+     }
+ 
+     // The shared overview does not open a workspace; session selection checks trust when needed.
++    // acpc: folder trust gates Codex's own execution, which acpc never runs.
+     if !matches!(
+         session_selection,
+         resume_picker::SessionSelection::AgentsOverview
+     ) && (!uses_remote_workspace || remote_cwd_override.is_some())
++        && !crate::acpc::enabled()
+     {
+         let resumed_thread = if matches!(app_server_target, AppServerTarget::LocalDaemon { .. })
+             && let resume_picker::SessionSelection::Resume(target) = &session_selection
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
 index 18f8ae6..342c30d 100644
 --- a/codex-rs/tui/src/slash_command.rs

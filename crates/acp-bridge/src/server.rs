@@ -1,8 +1,10 @@
 //! The bridge actor: transport plumbing, JSON-RPC bookkeeping, dispatch.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use acp_client::AgentEvent;
 use acp_client::ClientOptions;
@@ -33,6 +35,8 @@ use tokio_util::sync::CancellationToken;
 use crate::agents::AgentProfile;
 use crate::agents::Agents;
 use crate::agents::ConnectedAgent;
+use crate::approvals::AgentRequest;
+use crate::approvals::AgentRequestKey;
 use crate::threads::Threads;
 
 pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
@@ -52,6 +56,9 @@ pub struct BridgeOptions {
     pub client: ClientOptions,
     pub mcp_servers: Vec<acp::McpServer>,
     pub user_agent: String,
+    /// Filled with the ids of threads whose agent can list and reopen
+    /// sessions, i.e. the ones `acpc resume <id>` can continue.
+    pub resumable: Arc<Mutex<HashSet<String>>>,
 }
 
 pub enum BridgeTransport {
@@ -169,6 +176,8 @@ pub(crate) struct Bridge {
     connections: HashMap<ConnectionId, Connection>,
     server_requests: HashMap<RequestId, PendingServerRequest>,
     next_server_request_id: i64,
+    /// Agent permission/elicitation requests shown to the client.
+    pub(crate) agent_requests: HashMap<AgentRequestKey, AgentRequest>,
     pub(crate) agents: Agents,
     pub(crate) threads: Threads,
 }
@@ -182,6 +191,7 @@ impl Bridge {
             connections: HashMap::new(),
             server_requests: HashMap::new(),
             next_server_request_id: 1,
+            agent_requests: HashMap::new(),
             agents,
             threads: Threads::default(),
         }

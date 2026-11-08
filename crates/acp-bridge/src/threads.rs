@@ -6,7 +6,6 @@ use std::sync::Arc;
 use acp_client::AgentConnection;
 use acp_client::AgentEvent;
 use acp_client::LoadId;
-use acp_client::PendingRequestId;
 use acp_client::PromptId;
 use acp_client::schema as acp;
 use codex_app_server_protocol::ErrorNotification;
@@ -46,34 +45,6 @@ pub(crate) struct ActiveTurn {
     pub(crate) builder: TurnBuilder,
     pub(crate) prompt_id: Option<PromptId>,
     pub(crate) cancel_requested: bool,
-    /// Agent permission/elicitation requests shown to the client.
-    pub(crate) pending: HashMap<PendingRequestId, (RequestId, PendingKind)>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PendingKind {
-    Permission,
-    Elicitation,
-}
-
-/// Answer an agent request nobody will answer anymore, as the spec asks
-/// for abandoned requests (outcome `cancelled` / action `cancel`).
-pub(crate) fn abandon_agent_request(
-    connection: &AgentConnection,
-    id: PendingRequestId,
-    kind: PendingKind,
-) {
-    match kind {
-        PendingKind::Permission => {
-            connection.respond_permission(id, acp::RequestPermissionOutcome::Cancelled);
-        }
-        PendingKind::Elicitation => {
-            connection.respond_elicitation(
-                id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
-            );
-        }
-    }
 }
 
 /// History reconstruction while `session/load` replays the conversation.
@@ -452,6 +423,16 @@ fn adopt_new_session(
     connection: &Arc<AgentConnection>,
     response: acp::NewSessionResponse,
 ) {
+    // The session died with its process if the agent exited meanwhile.
+    if !bridge.agents.is_live(agent, connection) {
+        bridge.respond_error(
+            conn,
+            id,
+            crate::server::INTERNAL_ERROR,
+            format!("agent `{agent}` exited; try again"),
+        );
+        return;
+    }
     let session_id = response.session_id.to_string();
     let thread_id = thread_id_for(agent, &session_id);
     let mut state = ThreadState::new(
@@ -467,6 +448,7 @@ fn adopt_new_session(
     let reply = records::thread_start_response(&state);
     let thread = reply.thread.clone();
     bridge.threads.insert(state);
+    note_resumable(bridge, &thread_id, connection);
     for update in bridge.threads.take_orphans(&thread_id) {
         on_session_update(bridge, agent, update);
     }
@@ -474,6 +456,20 @@ fn adopt_new_session(
     bridge.notify(ServerNotification::ThreadStarted(ThreadStartedNotification { thread }));
     if let Some(state) = bridge.threads.get(&thread_id) {
         crate::ext::thread_state(bridge, state);
+    }
+}
+
+/// Remember `thread_id` for the `acpc resume` hint if its agent can list
+/// and reopen sessions.
+pub(crate) fn note_resumable(bridge: &Bridge, thread_id: &str, connection: &AgentConnection) {
+    let caps = connection.caps();
+    if caps.list_sessions() && (caps.load_session() || caps.resume_session()) {
+        bridge
+            .options
+            .resumable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(thread_id.to_string());
     }
 }
 
@@ -550,7 +546,6 @@ pub(crate) fn start_turn(
         builder,
         prompt_id: None,
         cancel_requested: false,
-        pending: HashMap::new(),
     });
     let turn = records::turn(&turn_id, Vec::new(), TurnStatus::InProgress, None, Some(started_at), None);
     bridge.respond(
@@ -754,7 +749,7 @@ fn finish_turn(
             let message = if err.is_auth_required() {
                 format!("The agent requires authentication: {}", err.message)
             } else {
-                err.message.clone()
+                err.message
             };
             let error = records::turn_error(message);
             if let Some(turn_id) = bridge
@@ -787,18 +782,12 @@ pub(crate) fn finish_turn_with(
     let Some(active) = thread.active.take() else {
         return;
     };
-    let agent = thread.agent.clone();
+    let turn_id = active.builder.id.clone();
     let mut emit = Vec::new();
     let turn = active.builder.finish(status, error, &mut emit);
     thread.turns.push(turn.clone());
     thread.updated_at = records::now_secs();
-    let connection = bridge.agents.connection(&agent);
-    for (pending_id, (request_id, kind)) in active.pending {
-        if let Some(connection) = &connection {
-            abandon_agent_request(connection, pending_id, kind);
-        }
-        bridge.resolve_server_request(&request_id);
-    }
+    crate::approvals::abandon_turn_requests(bridge, thread_id, &turn_id);
     emit_all(bridge, emit);
     bridge.notify(ServerNotification::TurnCompleted(TurnCompletedNotification {
         thread_id: thread_id.to_string(),
@@ -823,10 +812,11 @@ pub(crate) fn on_agent_exited(bridge: &mut Bridge, agent: &str, reason: &str, st
     }
 }
 
-/// The agent's sessions are gone (exit or restart): fail running turns,
-/// answer pending resumes, and unload its threads. Returns whether the
-/// agent had any loaded thread.
+/// The agent's sessions are gone (exit or restart): withdraw its requests,
+/// fail running turns, answer pending resumes, and unload its threads.
+/// Returns whether the agent had any loaded thread.
 pub(crate) fn unload_agent_threads(bridge: &mut Bridge, agent: &str, message: &str) -> bool {
+    crate::approvals::abandon_agent_requests(bridge, agent);
     let mut any = false;
     for id in bridge.threads.on_agent(agent) {
         let had_turn = bridge

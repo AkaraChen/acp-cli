@@ -2,6 +2,8 @@
 
 mod common;
 
+use std::time::Duration;
+
 use common::Harness;
 use common::HarnessConfig;
 use pretty_assertions::assert_eq;
@@ -429,4 +431,177 @@ async fn session_options_and_commands_reach_the_client() {
             break;
         }
     }
+}
+
+/// A second agent whose "sign in" turn asks a request-scoped question
+/// (as a sign-in or setup step would) after a pause.
+fn with_setup_agent() -> HarnessConfig {
+    let scenario = json!({
+        "turns": [{
+            "match": "sign in",
+            "steps": [
+                {"sleep_ms": 2500},
+                {
+                    "elicitation": {
+                        "requestId": "setup",
+                        "mode": "form",
+                        "message": "Token?",
+                        "requestedSchema": {"type": "object", "properties": {"token": {"type": "string"}}}
+                    },
+                    "on": {"accept": [{"text": "token {{elicitation.token}}"}]}
+                }
+            ]
+        }]
+    });
+    HarnessConfig {
+        agents: vec![
+            ("mock".to_string(), "Mock".to_string()),
+            ("setup".to_string(), "Setup".to_string()),
+        ],
+        agent_scenarios: vec![("setup".to_string(), scenario)],
+        ..HarnessConfig::default()
+    }
+}
+
+/// Thread times have one-second resolution: wait long enough that a thread
+/// touched afterwards is the most recent one, which request-scoped
+/// questions are shown on.
+async fn next_second() {
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+}
+
+#[tokio::test]
+async fn turn_end_keeps_another_agents_request_scoped_elicitation() {
+    let mut harness = Harness::start(with_setup_agent()).await;
+    let setup = harness.start_thread_on("setup").await;
+    harness.send_turn(&setup, "sign in").await;
+    next_second().await;
+    // The question arrives while this thread runs a turn, and is shown on it.
+    let mine = harness.start_thread().await;
+    let turn = harness.send_turn(&mine, "slow").await;
+    let turn_id = turn["turn"]["id"].as_str().expect("turn id").to_string();
+    let request = harness.next("mcpServer/elicitation/request").await;
+
+    harness
+        .request("turn/interrupt", json!({"threadId": mine, "turnId": turn_id}))
+        .await
+        .expect("turn/interrupt");
+    loop {
+        let message = harness
+            .next_any(&["serverRequest/resolved", "turn/completed"])
+            .await;
+        assert_ne!(message["params"]["requestId"], request["id"], "withdrawn: {message}");
+        if message["method"] == "turn/completed" && message["params"]["threadId"] == mine.as_str() {
+            break;
+        }
+    }
+
+    // The other agent still gets the answer.
+    harness
+        .respond(
+            request["id"].clone(),
+            json!({"action": "accept", "content": {"token": "abc"}, "_meta": null}),
+        )
+        .await;
+    let (items, completed) = completed_items(&mut harness).await;
+    assert_eq!(completed["params"]["threadId"], setup.as_str());
+    assert_eq!(completed["params"]["turn"]["status"], "completed");
+    let text: String = items
+        .iter()
+        .filter(|item| item["type"] == "agentMessage")
+        .filter_map(|item| item["text"].as_str())
+        .collect();
+    assert!(text.contains("token abc"), "{text}");
+}
+
+#[tokio::test]
+async fn out_of_turn_elicitation_is_withdrawn_when_the_agent_withdraws_it() {
+    let mut harness = Harness::start(with_setup_agent()).await;
+    let setup = harness.start_thread_on("setup").await;
+    let turn = harness.send_turn(&setup, "sign in").await;
+    let turn_id = turn["turn"]["id"].as_str().expect("turn id").to_string();
+    next_second().await;
+    // Idle: the question is shown on a thread without a turn.
+    harness.start_thread().await;
+    let request = harness.next("mcpServer/elicitation/request").await;
+
+    // Once its turn is cancelled, the agent withdraws the unanswered
+    // question with `$/cancel_request`.
+    harness
+        .request("turn/interrupt", json!({"threadId": setup, "turnId": turn_id}))
+        .await
+        .expect("turn/interrupt");
+    let resolved = harness.next("serverRequest/resolved").await;
+    assert_eq!(resolved["params"]["requestId"], request["id"]);
+    let completed = harness.next("turn/completed").await;
+    assert_eq!(completed["params"]["turn"]["status"], "interrupted");
+}
+
+#[tokio::test]
+async fn duplicate_resume_while_the_agent_connects_is_refused() {
+    let mut scenario = scenario_with_history();
+    scenario["require_auth"] = json!(true);
+    scenario["auth_methods"] = json!([
+        {"type": "terminal", "id": "tlogin", "name": "Terminal login", "args": ["--login"], "env": {}}
+    ]);
+    let mut harness = Harness::start(HarnessConfig {
+        scenario: Some(scenario),
+        terminal_auth: true,
+        ..HarnessConfig::default()
+    })
+    .await;
+    let list = harness.request("thread/list", json!({})).await.expect("thread/list");
+    let thread_id = list["data"]
+        .as_array()
+        .expect("data")
+        .iter()
+        .find(|thread| thread["name"] == "Earlier work")
+        .and_then(|thread| thread["id"].as_str())
+        .expect("listed session")
+        .to_string();
+
+    // Terminal sign-in restarts the agent.
+    let select = harness
+        .send_request("acpc/agent/select", json!({"slug": "mock"}))
+        .await;
+    let auth = harness.next("acpc/auth/select").await;
+    harness.respond(auth["id"].clone(), json!({"methodId": "tlogin"})).await;
+    let run = harness.next("acpc/terminal/run").await;
+    // What the login command would have recorded.
+    std::fs::write(harness.state_dir.path().join("mock/authenticated"), "ok\n").expect("auth marker");
+    harness.respond(run["id"].clone(), json!({"exitCode": 0})).await;
+
+    // Both wait for the restarted agent.
+    let first = harness
+        .send_request("thread/resume", json!({"threadId": thread_id}))
+        .await;
+    let second = harness
+        .send_request("thread/resume", json!({"threadId": thread_id}))
+        .await;
+    let error = harness.response(second).await.expect_err("duplicate resume");
+    assert!(
+        error["message"].as_str().is_some_and(|m| m.contains("already being opened")),
+        "{error}"
+    );
+    let resumed = harness.response(first).await.expect("thread/resume");
+    assert_eq!(resumed["thread"]["turns"].as_array().map(Vec::len), Some(2));
+    harness.response(select).await.expect("agent/select");
+}
+
+#[tokio::test]
+async fn only_threads_their_agent_can_reopen_are_resumable() {
+    let mut harness = Harness::start(HarnessConfig {
+        agents: vec![
+            ("mock".to_string(), "Mock".to_string()),
+            ("nolist".to_string(), "No list".to_string()),
+        ],
+        agent_scenarios: vec![("nolist".to_string(), json!({"capabilities": {"list": false}}))],
+        ..HarnessConfig::default()
+    })
+    .await;
+    let listed = harness.start_thread().await;
+    let unlisted = harness.start_thread_on("nolist").await;
+    let resumable = harness.resumable.lock().expect("resumable").clone();
+    assert!(resumable.contains(&listed));
+    assert!(!resumable.contains(&unlisted));
 }
