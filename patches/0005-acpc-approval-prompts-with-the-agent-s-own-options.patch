@@ -35,10 +35,10 @@ index e9a59ca..4e5f134 100644
  }
  
 diff --git a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
-index 8ad7c58..912b373 100644
+index d8487f0..0f3c484 100644
 --- a/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/v2/acpc.rs
-@@ -198,7 +198,7 @@ pub struct AcpcModeSetParams {
+@@ -202,7 +202,7 @@ pub struct AcpcModeSetParams {
  pub struct AcpcModeSetResponse {}
  
  /// An agent-provided permission option (ACP `PermissionOption`).

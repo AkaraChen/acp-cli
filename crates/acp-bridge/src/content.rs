@@ -125,9 +125,12 @@ pub(crate) fn display_text(block: &acp::ContentBlock) -> String {
 
 /// A user message as Codex input, for replayed history.
 pub(crate) fn user_input(block: &acp::ContentBlock) -> Option<UserInput> {
+    if crate::handoff::is_handoff(block) {
+        return None;
+    }
     match block {
-        acp::ContentBlock::Text(text) => Some(UserInput::Text {
-            text: text.text.clone(),
+        acp::ContentBlock::Text(text) => crate::handoff::strip(&text.text).map(|text| UserInput::Text {
+            text: text.to_string(),
             text_elements: Vec::new(),
         }),
         acp::ContentBlock::ResourceLink(link) => {

@@ -75,6 +75,8 @@ pub(crate) struct ThreadState {
     pub(crate) usage: Option<(u64, u64)>,
     pub(crate) image_input: bool,
     pub(crate) agent_name: String,
+    /// Sent with the first prompt, then cleared.
+    pub(crate) handoff: Option<crate::handoff::Handoff>,
 }
 
 impl ThreadState {
@@ -99,6 +101,7 @@ impl ThreadState {
             usage: None,
             image_input: false,
             agent_name,
+            handoff: None,
         }
     }
 
@@ -452,6 +455,7 @@ fn adopt_new_session(
     let reply = records::thread_start_response(&state);
     let thread = reply.thread.clone();
     bridge.threads.insert(state);
+    crate::handoff::attach(bridge, agent, &thread_id);
     note_resumable(bridge, &thread_id, connection);
     for update in bridge.threads.take_orphans(&thread_id) {
         on_session_update(bridge, agent, update);
@@ -518,7 +522,7 @@ pub(crate) fn start_turn(
         return;
     };
     let cwd = thread.cwd.as_path().to_path_buf();
-    let prompt = crate::content::prompt_blocks(&input, connection.caps(), &cwd);
+    let mut prompt = crate::content::prompt_blocks(&input, connection.caps(), &cwd);
     if prompt.is_empty() {
         bridge.respond_error(conn, id, crate::server::INVALID_PARAMS, "empty prompt");
         return;
@@ -546,6 +550,8 @@ pub(crate) fn start_turn(
             .unwrap_or_default();
     }
     thread.updated_at = records::now_secs();
+    // After the user's blocks were recorded above: history shows only them.
+    let handoff = thread.handoff.take();
     thread.active = Some(ActiveTurn {
         builder,
         prompt_id: None,
@@ -561,6 +567,15 @@ pub(crate) fn start_turn(
         thread_id: thread_id_owned.clone(),
         turn,
     }));
+    if let Some(handoff) = handoff {
+        prompt.insert(0, crate::handoff::block(&handoff, connection.caps().prompt_embedded_context()));
+        bridge.notify(ServerNotification::AcpcNotice(codex_app_server_protocol::AcpcNoticeNotification {
+            thread_id: Some(thread_id_owned.clone()),
+            severity: "info".to_string(),
+            title: format!("Sent your conversation with {} along with this message.", handoff.from_name),
+            description: None,
+        }));
+    }
 
     bridge.spawn(async move {
         let (options, error) = settings.apply(&connection, &session_id, current_options).await;
