@@ -509,3 +509,19 @@ html[lang="zh-CN"] .vbg-report {
 .vbg-custom-more {
   margin-top: var(--vbg-space-4);
 }
+
+/* Icons are single-colour SVGs (currentColor), so draw them as masks to follow the text colour. */
+.vbg-custom-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vbg-space-2);
+}
+
+.vbg-custom-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
