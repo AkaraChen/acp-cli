@@ -181,8 +181,8 @@
             <span lang="zh-CN">安装并开始用</span>
           </h2>
           <p>
-            <span lang="en">Install the latest release for Linux or macOS, add an agent and start. On Windows, run <code>irm https://raw.githubusercontent.com/AkaraChen/acpc/main/install.ps1 | iex</code> in PowerShell. Other options are in the <a href="https://github.com/AkaraChen/acpc#install">README</a>.</span>
-            <span lang="zh-CN">安装 Linux 或 macOS 的最新版本，接入一个 agent，然后启动。Windows 上在 PowerShell 里运行 <code>irm https://raw.githubusercontent.com/AkaraChen/acpc/main/install.ps1 | iex</code>。其他方式见 <a href="https://github.com/AkaraChen/acpc#install">README</a>。</span>
+            <span lang="en">Install the latest release, add an agent and start. Other options are in the <a href="https://github.com/AkaraChen/acpc#install">README</a>.</span>
+            <span lang="zh-CN">安装最新版本，接入一个 agent，然后启动。其他方式见 <a href="https://github.com/AkaraChen/acpc#install">README</a>。</span>
           </p>
           <div class="vbg-cluster">
             <a class="vbg-button" data-variant="primary" href="https://github.com/AkaraChen/acpc">
@@ -191,7 +191,15 @@
           </div>
         </div>
         <div class="vbg-span-7 vbg-flow vbg-custom-commands">
-<pre><code>curl -fsSL https://raw.githubusercontent.com/AkaraChen/acpc/main/install.sh | sh
+          <div class="vbg-custom-os" id="install-os" role="tablist" aria-label="Operating system">
+            <button type="button" role="tab" id="os-unix" aria-controls="install-unix" aria-selected="true">macOS / Linux</button>
+            <button type="button" role="tab" id="os-windows" aria-controls="install-windows" aria-selected="false" tabindex="-1">Windows</button>
+          </div>
+<pre id="install-unix" role="tabpanel" aria-labelledby="os-unix"><code>curl -fsSL https://raw.githubusercontent.com/AkaraChen/acpc/main/install.sh | sh
+acpc add "opencode acp"
+acpc add --name Claude npx -y @agentclientprotocol/claude-agent-acp@latest
+acpc</code></pre>
+<pre id="install-windows" role="tabpanel" aria-labelledby="os-windows"><code>irm https://raw.githubusercontent.com/AkaraChen/acpc/main/install.ps1 | iex
 acpc add "opencode acp"
 acpc add --name Claude npx -y @agentclientprotocol/claude-agent-acp@latest
 acpc</code></pre>
@@ -253,24 +261,30 @@ acpc</code></pre>
       });
     });
 
-    var tabs = Array.prototype.slice.call(document.querySelectorAll(".vbg-custom-steps [role=tab]"));
-    function select(tab, focus) {
-      tabs.forEach(function (t) {
-        var on = t === tab;
-        t.setAttribute("aria-selected", String(on));
-        t.tabIndex = on ? 0 : -1;
-        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    function tablist(selector, initial) {
+      var tabs = Array.prototype.slice.call(document.querySelectorAll(selector + " [role=tab]"));
+      function select(tab, focus) {
+        tabs.forEach(function (t) {
+          var on = t === tab;
+          t.setAttribute("aria-selected", String(on));
+          t.tabIndex = on ? 0 : -1;
+          document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+        });
+        if (focus) tab.focus();
+      }
+      tabs.forEach(function (t, i) {
+        t.addEventListener("click", function () { select(t); });
+        t.addEventListener("keydown", function (e) {
+          var d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+          if (d) { e.preventDefault(); select(tabs[(i + d + tabs.length) % tabs.length], true); }
+        });
       });
-      if (focus) tab.focus();
+      select(tabs[initial]);
     }
-    tabs.forEach(function (t, i) {
-      t.addEventListener("click", function () { select(t); });
-      t.addEventListener("keydown", function (e) {
-        var d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
-        if (d) { e.preventDefault(); select(tabs[(i + d + tabs.length) % tabs.length], true); }
-      });
-    });
-    select(tabs[0]);
+    tablist(".vbg-custom-steps", 0);
+
+    var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+    tablist("#install-os", /win/i.test(platform) ? 1 : 0);
   })();
 </script>
 </body>

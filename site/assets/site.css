@@ -350,6 +350,35 @@ html[lang="zh-CN"] .vbg-report {
   border-color: transparent;
 }
 
+.vbg-custom-os {
+  display: flex;
+  gap: var(--vbg-space-4);
+  border-bottom: 1px solid var(--vbg-border-on-contrast);
+}
+
+#install-os button {
+  min-height: 0;
+  margin-bottom: -1px;
+  padding: var(--vbg-space-2) 0;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-on-contrast-secondary);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+#install-os button:hover,
+#install-os button[aria-selected="true"] {
+  color: var(--vbg-text-on-contrast);
+}
+
+#install-os button[aria-selected="true"] {
+  border-bottom-color: var(--vbg-text-on-contrast);
+}
+
 .vbg-custom-commands pre {
   margin: 0;
   padding: var(--vbg-space-5);
