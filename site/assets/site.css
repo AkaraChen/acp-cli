@@ -433,3 +433,75 @@ html[lang="zh-CN"] .vbg-report {
     grid-column: 1 / -1;
   }
 }
+
+/* Agent list: rendered from the JSON embedded in index.html */
+
+.vbg-custom-agent-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--vbg-space-4);
+  margin-top: var(--vbg-space-6);
+}
+
+#agent-filter {
+  width: 100%;
+  max-width: 24rem;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-primary);
+  background: transparent;
+  border: 1px solid var(--vbg-border-subtle);
+  padding: var(--vbg-space-2) var(--vbg-space-3);
+}
+
+#agent-filter:focus-visible {
+  outline: 2px solid var(--vbg-focus);
+  outline-offset: -1px;
+}
+
+.vbg-custom-agent-count {
+  color: var(--vbg-text-secondary);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: var(--vbg-type-compact);
+}
+
+.vbg-section .vbg-custom-agent-tools + .vbg-table-wrap {
+  margin-top: var(--vbg-space-3);
+}
+
+.vbg-custom-agents th[scope="row"] {
+  white-space: nowrap;
+}
+
+.vbg-custom-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vbg-space-3);
+}
+
+.vbg-custom-cmd code {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.vbg-custom-cmd button {
+  flex: none;
+  min-height: 0;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-secondary);
+  background: transparent;
+  border: 1px solid var(--vbg-border-subtle);
+  padding: var(--vbg-space-1) var(--vbg-space-2);
+  cursor: pointer;
+}
+
+.vbg-custom-cmd button:hover,
+.vbg-custom-cmd button.is-copied {
+  color: var(--vbg-text-primary);
+  border-color: var(--vbg-text-primary);
+}
