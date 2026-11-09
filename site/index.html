@@ -28,6 +28,7 @@
     <div class="vbg-masthead">
       <span class="vbg-identity"><a class="vbg-custom-wordmark" href="#main">acpc</a></span>
       <div class="vbg-document-meta vbg-custom-nav">
+        <a href="agents.html">Agents</a>
         <a href="https://github.com/AkaraChen/acpc">GitHub</a>
         <span class="vbg-custom-lang" id="lang" role="group" aria-label="Language">
           <button type="button" data-set-lang="en">EN</button>
@@ -149,74 +150,27 @@
           <span lang="zh-CN">acpc 不自带 agent，也不偏向任何一家。<code>acpc add</code> 接收启动 agent ACP 模式的命令。没有遥测，不存本地记录，也从不碰你的凭证。</span>
         </p>
       </div>
-      <div class="vbg-custom-agent-tools">
-        <label class="vbg-visually-hidden" for="agent-filter"><span lang="en">Filter agents</span><span lang="zh-CN">筛选 agent</span></label>
-        <input id="agent-filter" type="search" autocomplete="off" spellcheck="false" placeholder="Filter agents / 筛选 agent">
-        <span class="vbg-custom-agent-count" id="agent-count"></span>
-      </div>
       <div class="vbg-table-wrap">
-        <table class="vbg-custom-agents">
-          <caption class="vbg-visually-hidden"><span lang="en">Commands to add ACP agents</span><span lang="zh-CN">接入 ACP agent 的命令</span></caption>
+        <table>
+          <caption class="vbg-visually-hidden"><span lang="en">Commands to add popular ACP agents</span><span lang="zh-CN">接入常用 ACP agent 的命令</span></caption>
           <thead>
             <tr>
               <th scope="col">Agent</th>
-              <th scope="col"><span lang="en">Needs</span><span lang="zh-CN">前提</span></th>
               <th scope="col"><span lang="en">Command</span><span lang="zh-CN">命令</span></th>
             </tr>
           </thead>
-          <tbody id="agent-rows"></tbody>
+          <tbody>
+            <tr><th scope="row">Claude</th><td class="vbg-mono">acpc add --slug claude --name &quot;Claude Agent&quot; npx -y @agentclientprotocol/claude-agent-acp@latest</td></tr>
+            <tr><th scope="row">Codex</th><td class="vbg-mono">acpc add --slug codex --name Codex npx -y @agentclientprotocol/codex-acp@latest</td></tr>
+            <tr><th scope="row">Gemini</th><td class="vbg-mono">acpc add --slug gemini --name &quot;Gemini CLI&quot; npx -y @google/gemini-cli@latest --acp</td></tr>
+            <tr><th scope="row">GitHub Copilot</th><td class="vbg-mono">acpc add --slug copilot --name &quot;GitHub Copilot&quot; npx -y @github/copilot@latest --acp</td></tr>
+            <tr><th scope="row">OpenCode</th><td class="vbg-mono">acpc add --slug opencode --name OpenCode opencode acp</td></tr>
+          </tbody>
         </table>
       </div>
-      <p class="vbg-custom-aside">
-        <span lang="en">npx and uvx agents are fetched on first run. The rest must already be installed and on your PATH; follow the agent's link to install it. Your own agent: <code>acpc add ./my-agent</code>.</span>
-        <span lang="zh-CN">npx 和 uvx 的 agent 首次运行时自动下载。其余的需要先安装好并在 PATH 里，点 agent 名字去它的主页安装。你自己的 agent：<code>acpc add ./my-agent</code>。</span>
-      </p>
-<script type="application/json" id="agents-data">
-[
-  {"name": "Agoragentic", "via": "npx", "url": "https://agoragentic.com", "command": "acpc add --slug agoragentic --name Agoragentic npx -y agoragentic-mcp@latest --acp"},
-  {"name": "Amp", "via": "path", "url": "https://github.com/tao12345666333/amp-acp", "command": "acpc add --slug amp --name Amp amp-acp"},
-  {"name": "Auggie CLI", "via": "npx", "url": "https://www.augmentcode.com/", "command": "acpc add --slug auggie --name \"Auggie CLI\" npx -y @augmentcode/auggie@latest --acp"},
-  {"name": "Autohand Code", "via": "path", "url": "https://github.com/autohandai/code-cli/blob/main/docs/guides/ACP.md", "command": "acpc add --slug autohand --name \"Autohand Code\" autohand --acp"},
-  {"name": "Bob", "via": "npx", "url": "https://bob.ibm.com", "command": "acpc add --slug bob --name Bob npx -y @ibm/bob@latest acp"},
-  {"name": "Claude Agent", "via": "npx", "url": "https://github.com/agentclientprotocol/claude-agent-acp", "command": "acpc add --slug claude --name \"Claude Agent\" npx -y @agentclientprotocol/claude-agent-acp@latest"},
-  {"name": "Cline", "via": "npx", "url": "https://cline.bot/cli", "command": "acpc add --slug cline --name Cline npx -y cline@latest --acp"},
-  {"name": "Codebuddy Code", "via": "npx", "url": "https://www.codebuddy.cn/cli/", "command": "acpc add --slug codebuddy-code --name \"Codebuddy Code\" npx -y @tencent-ai/codebuddy-code@latest --acp"},
-  {"name": "Codex", "via": "npx", "url": "https://github.com/agentclientprotocol/codex-acp", "command": "acpc add --slug codex --name Codex npx -y @agentclientprotocol/codex-acp@latest"},
-  {"name": "Cortex Code", "via": "path", "url": "https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code", "command": "acpc add --slug cortex --name \"Cortex Code\" cortex acp serve"},
-  {"name": "Corust Agent", "via": "path", "url": "https://corust.ai/", "command": "acpc add --slug corust --name \"Corust Agent\" corust-agent-acp"},
-  {"name": "crow-cli", "via": "path", "url": "https://crow-ai.dev", "command": "acpc add --slug crow-cli --name crow-cli crow-cli acp"},
-  {"name": "Cursor", "via": "path", "url": "https://cursor.com/docs/cli/acp", "command": "acpc add --slug cursor --name Cursor cursor-agent acp"},
-  {"name": "DeepAgents", "via": "npx", "url": "https://docs.langchain.com/oss/javascript/deepagents/overview", "command": "acpc add --slug deepagents --name DeepAgents npx -y deepagents-acp@latest"},
-  {"name": "Devin", "via": "path", "url": "https://docs.devin.ai/cli", "command": "acpc add --slug devin --name Devin devin acp"},
-  {"name": "DimCode", "via": "npx", "url": "https://dimagent.cn/", "command": "acpc add --slug dimcode --name DimCode npx -y dimcode@latest acp"},
-  {"name": "Dirac", "via": "npx", "url": "https://dirac.run", "command": "acpc add --slug dirac --name Dirac npx -y dirac-cli@latest --acp"},
-  {"name": "Factory Droid", "via": "npx", "url": "https://factory.ai/product/cli", "command": "acpc add --slug droid --name \"Factory Droid\" npx -y droid@latest exec --output-format acp-daemon"},
-  {"name": "fast-agent", "via": "uvx", "url": "https://fast-agent.ai", "command": "acpc add --slug fast-agent --name fast-agent uvx fast-agent-acp -x"},
-  {"name": "Gemini CLI", "via": "npx", "url": "https://geminicli.com", "command": "acpc add --slug gemini --name \"Gemini CLI\" npx -y @google/gemini-cli@latest --acp"},
-  {"name": "GitHub Copilot", "via": "npx", "url": "https://github.com/features/copilot/cli/", "command": "acpc add --slug copilot --name \"GitHub Copilot\" npx -y @github/copilot@latest --acp"},
-  {"name": "GLM Agent", "via": "npx", "url": "https://github.com/stefandevo/glm-acp-agent", "command": "acpc add --slug glm --name \"GLM Agent\" npx -y glm-acp-agent@latest"},
-  {"name": "goose", "via": "path", "url": "https://block.github.io/goose/", "command": "acpc add --slug goose --name goose goose acp"},
-  {"name": "Grok Build", "via": "npx", "url": "https://x.ai/cli", "command": "acpc add --slug grok-build --name \"Grok Build\" npx -y @xai-official/grok@latest agent stdio"},
-  {"name": "Harn", "via": "path", "url": "https://harnlang.com", "command": "acpc add --slug harn --name Harn harn serve acp"},
-  {"name": "Junie", "via": "path", "url": "https://junie.jetbrains.com", "command": "acpc add --slug junie --name Junie junie --acp=true"},
-  {"name": "Kilo", "via": "npx", "url": "https://kilo.ai/", "command": "acpc add --slug kilo --name Kilo npx -y @kilocode/cli@latest acp"},
-  {"name": "Kimchi", "via": "path", "url": "https://kimchi.dev", "command": "acpc add --slug kimchi --name Kimchi kimchi --mode acp"},
-  {"name": "Kimi CLI (Legacy)", "via": "path", "url": "https://moonshotai.github.io/kimi-cli/", "command": "acpc add --slug kimi --name \"Kimi CLI (Legacy)\" kimi acp"},
-  {"name": "Kimi Code", "via": "npx", "url": "https://moonshotai.github.io/kimi-code/", "command": "acpc add --slug kimi-code --name \"Kimi Code\" npx -y @moonshot-ai/kimi-code@latest acp"},
-  {"name": "Kiro CLI", "via": "path", "url": "https://kiro.dev/docs/cli/acp/", "command": "acpc add --slug kiro --name \"Kiro CLI\" kiro-cli acp --agent-engine=v3"},
-  {"name": "MiniMax Code", "via": "npx", "url": "https://agent.minimax.io", "command": "acpc add --slug minimax-code --name \"MiniMax Code\" npx -y @minimax-ai/code@latest acp"},
-  {"name": "Minion Code", "via": "uvx", "url": "https://github.com/femto/minion-code", "command": "acpc add --slug minion-code --name \"Minion Code\" uvx minion-code acp"},
-  {"name": "Mistral Vibe", "via": "path", "url": "https://mistral.ai/products/vibe", "command": "acpc add --slug vibe --name \"Mistral Vibe\" vibe-acp"},
-  {"name": "Nova", "via": "npx", "url": "https://www.compassap.ai/portfolio/nova.html", "command": "acpc add --slug nova --name Nova npx -y @compass-ai/nova@latest acp"},
-  {"name": "OpenCode", "via": "path", "url": "https://opencode.ai", "command": "acpc add --slug opencode --name OpenCode opencode acp"},
-  {"name": "pi ACP", "via": "npx", "url": "https://github.com/svkozak/pi-acp", "command": "acpc add --slug pi-acp --name \"pi ACP\" npx -y pi-acp@latest"},
-  {"name": "Poolside", "via": "path", "url": "https://poolside.ai", "command": "acpc add --slug poolside --name Poolside pool acp"},
-  {"name": "Qoder CLI", "via": "npx", "url": "https://qoder.com", "command": "acpc add --slug qoder --name \"Qoder CLI\" npx -y @qoder-ai/qodercli@latest --acp"},
-  {"name": "Qwen Code", "via": "npx", "url": "https://qwenlm.github.io/qwen-code-docs/en/users/overview", "command": "acpc add --slug qwen --name \"Qwen Code\" npx -y @qwen-code/qwen-code@latest --acp --experimental-skills"},
-  {"name": "Stakpak", "via": "path", "url": "https://stakpak.dev", "command": "acpc add --slug stakpak --name Stakpak stakpak acp"},
-  {"name": "VT Code", "via": "path", "url": "https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md", "command": "acpc add --slug vtcode --name \"VT Code\" vtcode acp"}
-]
-</script>
+      <div class="vbg-cluster vbg-custom-more">
+        <a class="vbg-button" href="agents.html"><span lang="en">All 42 agents</span><span lang="zh-CN">全部 42 个 agent</span></a>
+      </div>
       <p class="vbg-custom-aside">
         <span lang="en">Writing an agent? acpc is a strict client to test against. It implements the client side of ACP v1: sessions (new, load, resume, list, close, delete), permission requests with the agent's own options, elicitation forms, config options and modes, available commands, sign-in and cancellation. <code>acpc app-server</code> also lets tools built to drive Codex drive your agent.</span>
         <span lang="zh-CN">在写 agent？acpc 是一个严格的客户端，可以拿来测试。它实现了 ACP v1 的客户端部分：会话（new、load、resume、list、close、delete）、带 agent 自定义选项的权限请求、elicitation 表单、配置项和模式、可用命令、登录和取消。<code>acpc app-server</code> 还能让原本驱动 Codex 的工具来驱动你的 agent。</span>
@@ -332,44 +286,6 @@ acpc</code></pre>
       select(tabs[initial]);
     }
     tablist(".vbg-custom-steps", 0);
-
-    var agents = JSON.parse(document.getElementById("agents-data").textContent);
-    var rows = document.getElementById("agent-rows");
-    var filter = document.getElementById("agent-filter");
-    var count = document.getElementById("agent-count");
-    var needs = {
-      npx: '<a href="https://nodejs.org">Node.js</a>',
-      uvx: '<a href="https://docs.astral.sh/uv/">uv</a>',
-      path: '<span lang="en">Installed</span><span lang="zh-CN">已安装</span>'
-    };
-    function esc(t) {
-      return t.replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
-    }
-    rows.innerHTML = agents.map(function (a) {
-      return '<tr><th scope="row"><a href="' + esc(a.url) + '">' + esc(a.name) + '</a></th>' +
-        '<td>' + needs[a.via] + '</td>' +
-        '<td class="vbg-custom-cmd"><code>' + esc(a.command) + '</code>' +
-        '<button type="button" data-copy="' + esc(a.command) + '"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></td></tr>';
-    }).join("");
-    function apply() {
-      var q = filter.value.trim().toLowerCase(), shown = 0;
-      Array.prototype.forEach.call(rows.rows, function (r, i) {
-        var hit = !q || (agents[i].name + " " + agents[i].command).toLowerCase().indexOf(q) >= 0;
-        r.hidden = !hit;
-        if (hit) shown++;
-      });
-      count.textContent = shown + " / " + agents.length;
-    }
-    filter.addEventListener("input", apply);
-    apply();
-    rows.addEventListener("click", function (e) {
-      var b = e.target.closest("[data-copy]");
-      if (!b) return;
-      navigator.clipboard.writeText(b.dataset.copy).then(function () {
-        b.classList.add("is-copied");
-        setTimeout(function () { b.classList.remove("is-copied"); }, 1200);
-      });
-    });
 
     var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
     tablist("#install-os", /win/i.test(platform) ? 1 : 0);

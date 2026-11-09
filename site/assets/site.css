@@ -505,3 +505,7 @@ html[lang="zh-CN"] .vbg-report {
   color: var(--vbg-text-primary);
   border-color: var(--vbg-text-primary);
 }
+
+.vbg-custom-more {
+  margin-top: var(--vbg-space-4);
+}
