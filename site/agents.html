@@ -184,7 +184,7 @@
     }
     rows.innerHTML = agents.map(function (a) {
       return '<tr><th scope="row"><a class="vbg-custom-agent" href="' + esc(a.url) + '">' +
-        '<span class="vbg-custom-icon" style="--icon:url(' + esc(a.icon) + ')"></span>' + esc(a.name) + '</a></th>' +
+        '<span class="vbg-custom-icon" style="-webkit-mask-image:url(' + esc(a.icon) + ');mask-image:url(' + esc(a.icon) + ')"></span>' + esc(a.name) + '</a></th>' +
         '<td class="vbg-custom-cmd"><code>' + esc(a.command) + '</code>' +
         '<button type="button" data-copy="' + esc(a.command) + '"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></td></tr>';
     }).join("");

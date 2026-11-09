@@ -510,7 +510,8 @@ html[lang="zh-CN"] .vbg-report {
   margin-top: var(--vbg-space-4);
 }
 
-/* Icons are single-colour SVGs (currentColor), so draw them as masks to follow the text colour. */
+/* Icons are single-colour SVGs (currentColor), so draw them as masks to follow the text colour.
+   The mask image is set inline: a url() passed through a custom property resolves against this file. */
 .vbg-custom-agent {
   display: inline-flex;
   align-items: center;
@@ -522,6 +523,10 @@ html[lang="zh-CN"] .vbg-report {
   width: 16px;
   height: 16px;
   background: currentColor;
-  -webkit-mask: var(--icon) center / contain no-repeat;
-  mask: var(--icon) center / contain no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
