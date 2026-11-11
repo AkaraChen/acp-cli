@@ -130,7 +130,7 @@ pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, param
                             else {
                                 continue;
                             };
-                            crate::threads::note_resumable(bridge, &thread_id, &connection);
+                            crate::threads::note_resumable(bridge, &thread_id, &agent, &connection);
                             if let Some(thread) = bridge.threads.get(&thread_id) {
                                 let in_cwds = cwds.as_ref().is_none_or(|cwds| {
                                     let cwd = thread.cwd.as_path().display().to_string();
@@ -243,7 +243,7 @@ fn search(
                     Ok(Some(info)) => {
                         let name = crate::threads::agent_display_name(bridge, &agent, &connection);
                         if let Some(thread_id) = register_listed(bridge, &agent, &name, &info) {
-                            crate::threads::note_resumable(bridge, &thread_id, &connection);
+                            crate::threads::note_resumable(bridge, &thread_id, &agent, &connection);
                         }
                         then(bridge, Ok(()));
                     }

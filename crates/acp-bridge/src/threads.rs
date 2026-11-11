@@ -473,7 +473,7 @@ fn adopt_new_session(
         records::thread_start_response(&state).into()
     };
     bridge.threads.insert(state);
-    note_resumable(bridge, &thread_id, connection);
+    note_resumable(bridge, &thread_id, agent, connection);
     for update in bridge.threads.take_orphans(&thread_id) {
         on_session_update(bridge, agent, update);
     }
@@ -484,9 +484,9 @@ fn adopt_new_session(
     }
 }
 
-/// Remember `thread_id` for the `acpc resume` hint if its agent can list
-/// and reopen sessions.
-pub(crate) fn note_resumable(bridge: &Bridge, thread_id: &str, connection: &AgentConnection) {
+/// Remember `thread_id` (and its agent) for the `acpc resume` hint if its
+/// agent can list and reopen sessions.
+pub(crate) fn note_resumable(bridge: &Bridge, thread_id: &str, agent: &str, connection: &AgentConnection) {
     let caps = connection.caps();
     if caps.list_sessions() && (caps.load_session() || caps.resume_session()) {
         bridge
@@ -494,7 +494,7 @@ pub(crate) fn note_resumable(bridge: &Bridge, thread_id: &str, connection: &Agen
             .resumable
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(thread_id.to_string());
+            .insert(thread_id.to_string(), agent.to_string());
     }
 }
 

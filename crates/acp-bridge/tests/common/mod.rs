@@ -5,7 +5,7 @@
 
 #![allow(clippy::expect_used, dead_code)]
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ pub struct Harness {
     shutdown: CancellationToken,
     pub state_dir: tempfile::TempDir,
     pub cwd: tempfile::TempDir,
-    pub resumable: Arc<Mutex<HashSet<String>>>,
+    pub resumable: Arc<Mutex<HashMap<String, String>>>,
 }
 
 pub struct HarnessConfig {

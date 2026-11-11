@@ -93,9 +93,10 @@ pub(crate) fn build(from: &ThreadState) -> Option<Handoff> {
     }
     let text = format!(
         "The user was working with {name} in acpc and switched to you. Their conversation so far \
-         follows, for context; continue from it. (They can go back to it with `acpc resume {id}`.)\n\n\
+         follows, for context; continue from it. (They can go back to it with `acpc resume -a {agent} {id}`.)\n\n\
          {transcript}",
         name = from.agent_name,
+        agent = from.agent,
         id = from.id,
     );
     Some(Handoff {

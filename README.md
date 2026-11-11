@@ -133,7 +133,7 @@ args = ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
 acpc                     # new session with the default agent
 acpc -a gemini "prompt"  # pick an agent, optionally with a first prompt
 acpc -C ~/src/project    # working directory for the session
-acpc resume [ID|--last]  # reopen a session (agents with session/list + load/resume)
+acpc resume [-a AGENT] [ID|--last]  # reopen a session (agents with session/list + load/resume)
 acpc login               # sign in with the agent's ACP method, then exit
 acpc app-server          # headless: the Codex app-server protocol on stdio
 ```

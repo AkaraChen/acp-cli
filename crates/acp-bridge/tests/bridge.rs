@@ -602,8 +602,8 @@ async fn only_threads_their_agent_can_reopen_are_resumable() {
     let listed = harness.start_thread().await;
     let unlisted = harness.start_thread_on("nolist").await;
     let resumable = harness.resumable.lock().expect("resumable").clone();
-    assert!(resumable.contains(&listed));
-    assert!(!resumable.contains(&unlisted));
+    assert_eq!(resumable.get(&listed).map(String::as_str), Some("mock"));
+    assert!(!resumable.contains_key(&unlisted));
 }
 
 #[tokio::test]

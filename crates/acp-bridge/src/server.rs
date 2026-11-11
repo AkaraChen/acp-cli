@@ -63,8 +63,9 @@ pub struct BridgeOptions {
     pub mcp_servers: Vec<acp::McpServer>,
     pub user_agent: String,
     /// Filled with the ids of threads whose agent can list and reopen
-    /// sessions, i.e. the ones `acpc resume <id>` can continue.
-    pub resumable: Arc<Mutex<HashSet<String>>>,
+    /// sessions, i.e. the ones `acpc resume -a <agent> <id>` can continue,
+    /// mapped to that agent's slug.
+    pub resumable: Arc<Mutex<HashMap<String, String>>>,
 }
 
 pub enum BridgeTransport {

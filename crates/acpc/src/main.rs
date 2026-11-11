@@ -286,14 +286,15 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
         ExitReason::UserRequested | ExitReason::TurnInterrupted => 0,
     };
     // Only a session its agent can list and reopen can be resumed.
-    let thread_id = exit.thread_id.filter(|thread_id| {
-        resumable
-            .lock()
-            .is_ok_and(|ids| ids.contains(&thread_id.to_string()))
+    // Name its agent too, or the session would reopen under the default one.
+    let resumable = exit.thread_id.and_then(|thread_id| {
+        let thread_id = thread_id.to_string();
+        let agent = resumable.lock().ok()?.get(&thread_id)?.clone();
+        Some((agent, thread_id))
     });
-    if let Some(thread_id) = thread_id {
+    if let Some((agent, thread_id)) = resumable {
         let color = std::io::stdout().is_terminal();
-        let command = format!("acpc resume {thread_id}");
+        let command = format!("acpc resume -a {agent} {thread_id}");
         let command = if color {
             format!("\u{1b}[36m{command}\u{1b}[39m")
         } else {
