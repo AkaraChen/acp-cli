@@ -10,25 +10,26 @@ loop, so the bridge can ask the user to pick a sign-in method
 (acpc/auth/select) and run a terminal sign-in command with the TUI's
 terminal (acpc/terminal/run) while it is pending.
 ---
- codex-rs/tui/src/acpc.rs                      | 115 +++++++
+ codex-rs/tui/src/acpc.rs                      | 117 +++++++
  codex-rs/tui/src/app.rs                       |   1 +
- codex-rs/tui/src/app/acpc.rs                  | 277 ++++++++++++++++
+ codex-rs/tui/src/app/acpc.rs                  | 282 +++++++++++++++
  codex-rs/tui/src/app/app_server_events.rs     |   3 +
  codex-rs/tui/src/app/event_dispatch.rs        |   3 +
  codex-rs/tui/src/app/tests/startup.rs         |  27 ++
  codex-rs/tui/src/app/thread_routing.rs        |   5 +-
  codex-rs/tui/src/app_event.rs                 |   2 +
- codex-rs/tui/src/chatwidget/acpc.rs           | 312 +++++++++++++++++-
+ codex-rs/tui/src/bottom_pane/mod.rs           |  81 ++++-
+ codex-rs/tui/src/chatwidget/acpc.rs           | 329 +++++++++++++++++-
  codex-rs/tui/src/chatwidget/interaction.rs    |   8 +
  codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
  codex-rs/tui/src/lib.rs                       |  29 +-
  codex-rs/tui/src/resume_picker.rs             |  23 +-
  codex-rs/tui/src/slash_command.rs             |   9 +
- 14 files changed, 809 insertions(+), 9 deletions(-)
+ 15 files changed, 911 insertions(+), 12 deletions(-)
  create mode 100644 codex-rs/tui/src/app/acpc.rs
 
 diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
-index f919f8d..5892bc3 100644
+index f919f8d..03391c8 100644
 --- a/codex-rs/tui/src/acpc.rs
 +++ b/codex-rs/tui/src/acpc.rs
 @@ -84,6 +84,8 @@ pub(crate) fn builtin_allowed(command: crate::slash_command::SlashCommand) -> bo
@@ -40,7 +41,7 @@ index f919f8d..5892bc3 100644
              | SlashCommand::Keymap
              | SlashCommand::Vim
              | SlashCommand::New
-@@ -122,3 +124,116 @@ pub(crate) fn agent_shadows<'a>(
+@@ -122,3 +124,118 @@ pub(crate) fn agent_shadows<'a>(
  ) -> bool {
      enabled() && !is_reserved(name) && agent_commands.any(|command| command == name)
  }
@@ -80,6 +81,8 @@ index f919f8d..5892bc3 100644
 +    /// Switch agents (`acpc/agent/select`), then start a new session, or
 +    /// fork the current one onto the new agent to bring its conversation.
 +    SwitchAgent { slug: String, bring: bool },
++    /// The switch finished or failed; unlock the composer.
++    SwitchDone,
 +    SetConfigOption {
 +        config_id: String,
 +        value: codex_app_server_protocol::AcpcSessionConfigInput,
@@ -171,10 +174,10 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..a35e1da
+index 0000000..3d2d2f1
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,282 @@
 +//! acpc: app-level handling of ACP agent switching, session options and
 +//! sign-in (see `crate::acpc`).
 +
@@ -237,6 +240,7 @@ index 0000000..a35e1da
 +                }
 +            }
 +            AcpcAppEvent::SwitchAgent { slug, bring } => self.switch_acpc_agent(app_server, slug, bring),
++            AcpcAppEvent::SwitchDone => self.chat_widget.end_acpc_switch(),
 +            AcpcAppEvent::SetConfigOption { config_id, value } => {
 +                let Some(thread_id) = self.chat_widget.thread_id() else {
 +                    return Ok(AppRunControl::Continue);
@@ -302,7 +306,8 @@ index 0000000..a35e1da
 +        Ok(AppRunControl::Continue)
 +    }
 +
-+    fn switch_acpc_agent(&self, app_server: &mut AppServerSession, slug: String, bring: bool) {
++    fn switch_acpc_agent(&mut self, app_server: &mut AppServerSession, slug: String, bring: bool) {
++        self.chat_widget.begin_acpc_switch(&slug);
 +        // Not awaited here: switching may need the user to sign in through
 +        // acpc/auth/select and acpc/terminal/run, which this loop must stay
 +        // free to serve.
@@ -321,6 +326,9 @@ index 0000000..a35e1da
 +                    "Could not switch agent: {err}"
 +                )))),
 +            }
++            // Queued after the session event, so input stays locked until the
++            // new session is on screen, or the old one stays if that fails.
++            tx.send(AppEvent::Acpc(AcpcAppEvent::SwitchDone));
 +        });
 +    }
 +
@@ -547,8 +555,140 @@ index 07f509d..f0a625a 100644
      AccountEmailLoaded {
          request_id: uuid::Uuid,
          email: Option<String>,
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+index b45180c..06acf96 100644
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -314,6 +314,8 @@ pub(crate) struct BottomPane {
+     pub(crate) questions: Option<Box<AsyncQuestions>>,
+     delayed_approval_requests: VecDeque<DelayedApprovalRequest>,
+     last_composer_activity_at: Option<Instant>,
++    /// acpc: placeholder of a composer kept read-only across modal views.
++    input_lock: Option<String>,
+ 
+     app_event_tx: AppEventSender,
+     frame_requester: FrameRequester,
+@@ -415,6 +417,7 @@ impl BottomPane {
+             questions: None,
+             delayed_approval_requests: VecDeque::new(),
+             last_composer_activity_at: None,
++            input_lock: None,
+             app_event_tx,
+             frame_requester,
+             thread_id: None,
+@@ -1120,7 +1123,7 @@ impl BottomPane {
+             if needs_redraw || view_complete {
+                 self.request_redraw();
+             }
+-        } else {
++        } else if self.input_lock.is_none() {
+             let needs_redraw = self.composer.handle_paste(pasted);
+             if has_pasted_text {
+                 self.record_composer_activity_at(Instant::now());
+@@ -1233,6 +1236,19 @@ impl BottomPane {
+         self.request_redraw();
+     }
+ 
++    /// acpc: make the composer read-only, showing `placeholder`, until
++    /// [`Self::unlock_input`]. Modal views closing meanwhile keep it locked.
++    pub(crate) fn lock_input(&mut self, placeholder: String) {
++        self.input_lock = Some(placeholder.clone());
++        self.set_composer_input_enabled(/*enabled*/ false, Some(placeholder));
++    }
++
++    pub(crate) fn unlock_input(&mut self) {
++        if self.input_lock.take().is_some() && !self.has_active_view() {
++            self.set_composer_input_enabled(/*enabled*/ true, /*placeholder*/ None);
++        }
++    }
++
+     pub(crate) fn show_shutdown_in_progress(&mut self) {
+         self.view_stack.clear();
+         self.warnings_view = None;
+@@ -1948,7 +1964,9 @@ impl BottomPane {
+ 
+     /// Return true when no popups or modal views are active, regardless of task state.
+     pub(crate) fn can_launch_external_editor(&self) -> bool {
+-        self.completion_can_yield_focus() && !self.composer.popup_active()
++        self.completion_can_yield_focus()
++            && !self.composer.popup_active()
++            && self.input_lock.is_none()
+     }
+ 
+     /// A hidden completion popup can yield to another pane. Prompts and queries keep input.
+@@ -2296,7 +2314,7 @@ impl BottomPane {
+ 
+     fn on_active_view_complete(&mut self) {
+         self.resume_status_timer_after_modal();
+-        self.set_composer_input_enabled(/*enabled*/ true, /*placeholder*/ None);
++        self.set_composer_input_enabled(self.input_lock.is_none(), self.input_lock.clone());
+     }
+ 
+     fn pause_status_timer_for_modal(&mut self) {
+@@ -4386,4 +4404,61 @@ mod tests {
+         assert!(pane.cursor_pos(area).is_some());
+         assert_eq!(lower_view_handle_calls.get(), 0);
+     }
++
++    #[test]
++    fn input_lock_outlasts_modal_views_until_unlocked() {
++        #[derive(Default)]
++        struct PasteCompletesView {
++            complete: bool,
++        }
++
++        impl Renderable for PasteCompletesView {
++            fn render(&self, _area: Rect, _buf: &mut Buffer) {}
++
++            fn desired_height(&self, _width: u16) -> u16 {
++                0
++            }
++        }
++
++        impl BottomPaneView for PasteCompletesView {
++            fn handle_paste(&mut self, _pasted: String) -> bool {
++                self.complete = true;
++                true
++            }
++
++            fn is_complete(&self) -> bool {
++                self.complete
++            }
++        }
++
++        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
++        let tx = AppEventSender::new(tx_raw);
++        let mut pane = BottomPane::new(BottomPaneParams {
++            app_event_tx: tx,
++            frame_requester: FrameRequester::test_dummy(),
++            has_input_focus: true,
++            enhanced_keys_supported: false,
++            placeholder_text: "Ask Codex to do anything".to_string(),
++            disable_paste_burst: false,
++            animations_enabled: true,
++            effects: Default::default(),
++            skills: Some(Vec::new()),
++        });
++
++        pane.lock_input("Switching to Mock…".to_string());
++        pane.push_view(Box::new(PasteCompletesView::default()));
++        pane.handle_paste("answer".to_string());
++        assert!(pane.view_stack.is_empty());
++        assert!(!pane.composer_input_enabled());
++
++        pane.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
++        pane.handle_paste("pasted".to_string());
++        assert_eq!(pane.composer_text(), "");
++        assert!(!pane.can_launch_external_editor());
++
++        pane.unlock_input();
++        assert!(pane.composer_input_enabled());
++        pane.handle_paste("pasted".to_string());
++        assert_eq!(pane.composer_text(), "pasted");
++    }
+ }
 diff --git a/codex-rs/tui/src/chatwidget/acpc.rs b/codex-rs/tui/src/chatwidget/acpc.rs
-index 7cf491b..8ae11ba 100644
+index 7cf491b..ad7fe20 100644
 --- a/codex-rs/tui/src/chatwidget/acpc.rs
 +++ b/codex-rs/tui/src/chatwidget/acpc.rs
 @@ -1,9 +1,31 @@
@@ -584,7 +724,7 @@ index 7cf491b..8ae11ba 100644
  
  impl ChatWidget {
      pub(super) fn on_acpc_notification(
-@@ -42,4 +64,292 @@ impl ChatWidget {
+@@ -42,4 +64,309 @@ impl ChatWidget {
              _ => {}
          }
      }
@@ -620,15 +760,18 @@ index 7cf491b..8ae11ba 100644
 +        self.request_redraw();
 +    }
 +
-+    /// After /agent picked `slug`: bring the current conversation along?
-+    pub(crate) fn open_acpc_handoff_prompt(&mut self, slug: &str) {
-+        let name = self
-+            .acpc
++    fn acpc_agent_name(&self, slug: &str) -> String {
++        self.acpc
 +            .agents
 +            .iter()
 +            .find(|agent| agent.slug == slug)
 +            .map_or(slug, |agent| agent.name.as_str())
-+            .to_string();
++            .to_string()
++    }
++
++    /// After /agent picked `slug`: bring the current conversation along?
++    pub(crate) fn open_acpc_handoff_prompt(&mut self, slug: &str) {
++        let name = self.acpc_agent_name(slug);
 +        let items = vec![
 +            SelectionItem {
 +                name: "Bring this conversation".to_string(),
@@ -659,6 +802,16 @@ index 7cf491b..8ae11ba 100644
 +            ..SelectionViewParams::picker()
 +        });
 +        self.request_redraw();
++    }
++
++    /// No input while switching to `slug`: it would go to the old session.
++    pub(crate) fn begin_acpc_switch(&mut self, slug: &str) {
++        let name = self.acpc_agent_name(slug);
++        self.bottom_pane.lock_input(format!("Switching to {name}…"));
++    }
++
++    pub(crate) fn end_acpc_switch(&mut self) {
++        self.bottom_pane.unlock_input();
 +    }
 +
 +    /// Mode selector: the `mode` config option, else legacy ACP modes.
@@ -800,6 +953,10 @@ index 7cf491b..8ae11ba 100644
 +
 +    /// Shift+Tab: move to the agent's next mode.
 +    pub(super) fn acpc_cycle_mode(&mut self) {
++        // Locked while switching agents; the mode belongs to the old session.
++        if !self.bottom_pane.composer_input_enabled() {
++            return;
++        }
 +        if let Some(option) = self.acpc_mode_option() {
 +            let AcpcSessionConfigKind::Select {
 +                current_value,
