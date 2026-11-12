@@ -1,0 +1,432 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E6=8B=9B=E7=89=8C=E7=96=AF=E5=AD=90?= <zp@buaa.us>
+Date: Tue, 10 Nov 2026 12:59:56 +0800
+Subject: [PATCH] acpc: decode ANSI styles in Markdown agent replies
+
+Convert agent-supplied ANSI styling into terminal spans before wrapping and table measurement. Preserve Markdown styles across SGR resets and keep original protocol source offsets. Gate the behavior on acpc mode and cover bilingual replies, colors, controls, tables and streaming suffixes with regression tests.
+---
+ codex-rs/tui/src/markdown_render.rs           |  42 +++-
+ codex-rs/tui/src/markdown_render/acpc_ansi.rs |  98 +++++++++
+ .../src/markdown_render/acpc_ansi_tests.rs    | 199 ++++++++++++++++++
+ 3 files changed, 337 insertions(+), 2 deletions(-)
+ create mode 100644 codex-rs/tui/src/markdown_render/acpc_ansi.rs
+ create mode 100644 codex-rs/tui/src/markdown_render/acpc_ansi_tests.rs
+
+diff --git a/codex-rs/tui/src/markdown_render.rs b/codex-rs/tui/src/markdown_render.rs
+index 69459f7..41217b8 100644
+--- a/codex-rs/tui/src/markdown_render.rs
++++ b/codex-rs/tui/src/markdown_render.rs
+@@ -77,6 +77,7 @@ use std::ops::Range;
+ use std::path::Path;
+ use std::path::PathBuf;
+ 
++mod acpc_ansi;
+ mod inline_directives;
+ mod list_spacing;
+ mod local_links;
+@@ -99,6 +100,9 @@ use local_links::render_local_link_target;
+ pub(crate) use streaming::StreamingMarkdownRender;
+ pub(crate) use streaming::render_streaming_markdown_lines_with_width_and_cwd;
+ #[cfg(test)]
++#[path = "markdown_render/acpc_ansi_tests.rs"]
++mod acpc_ansi_tests;
++#[cfg(test)]
+ #[path = "markdown_render/list_spacing_tests.rs"]
+ mod list_spacing_tests;
+ #[cfg(test)]
+@@ -510,6 +514,7 @@ struct Writer<'a, 'policy> {
+     text: Vec<HyperlinkLine>,
+     styles: MarkdownStyles,
+     inline_styles: Vec<Style>,
++    ansi_text: acpc_ansi::AnsiText,
+     copy_inline: Vec<crate::markdown_copy::Inline>,
+     copy_line: crate::markdown_copy::CopyLine,
+     quote_sources: Vec<std::sync::Arc<str>>,
+@@ -557,6 +562,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
+             text: Vec::new(),
+             styles: MarkdownStyles::default(),
+             inline_styles: Vec::new(),
++            ansi_text: acpc_ansi::AnsiText::default(),
+             copy_inline: Vec::new(),
+             copy_line: Default::default(),
+             quote_sources: Vec::new(),
+@@ -1402,6 +1408,12 @@ impl<'a, 'policy> Writer<'a, 'policy> {
+     }
+ 
+     fn push_span_to_table_cell(&mut self, span: Span<'static>) {
++        for span in self.ansi_text.spans(span) {
++            self.push_span_to_table_cell_decoded(span);
++        }
++    }
++
++    fn push_span_to_table_cell_decoded(&mut self, span: Span<'static>) {
+         let span = self.style_link_label(span);
+         let mut annotated = HyperlinkLine::new(Line::default());
+         annotated.push_span(
+@@ -1434,7 +1446,14 @@ impl<'a, 'policy> Writer<'a, 'policy> {
+     }
+ 
+     fn push_text_spans_to_table_cell(&mut self, text: &str, style: Style) {
+-        let span = self.style_link_label(Span::styled(text.to_string(), style));
++        let span = Span::styled(text.to_string(), style);
++        for span in self.ansi_text.spans(span) {
++            self.push_text_spans_to_table_cell_decoded(span);
++        }
++    }
++
++    fn push_text_spans_to_table_cell_decoded(&mut self, span: Span<'static>) {
++        let span = self.style_link_label(span);
+         let destination = self
+             .link
+             .as_ref()
+@@ -2368,6 +2387,12 @@ impl<'a, 'policy> Writer<'a, 'policy> {
+     }
+ 
+     fn push_local_link_label_span(&mut self, span: Span<'static>) {
++        for span in self.ansi_text.spans(span) {
++            self.push_local_link_label_span_decoded(span);
++        }
++    }
++
++    fn push_local_link_label_span_decoded(&mut self, span: Span<'static>) {
+         if let Some(link) = self.link.as_mut() {
+             link.local_label_spans.push(span);
+             link.local_label_inline.push(
+@@ -2521,6 +2546,12 @@ impl<'a, 'policy> Writer<'a, 'policy> {
+     }
+ 
+     fn push_span(&mut self, span: Span<'static>) {
++        for span in self.ansi_text.spans(span) {
++            self.push_span_decoded(span);
++        }
++    }
++
++    fn push_span_decoded(&mut self, span: Span<'static>) {
+         let span = self.style_link_label(span);
+         if self.current_line_content.is_none() {
+             self.push_line(Line::default());
+@@ -2560,7 +2591,14 @@ impl<'a, 'policy> Writer<'a, 'policy> {
+     }
+ 
+     fn push_text_spans(&mut self, text: &str, style: Style) {
+-        let span = self.style_link_label(Span::styled(text.to_string(), style));
++        let span = Span::styled(text.to_string(), style);
++        for span in self.ansi_text.spans(span) {
++            self.push_text_spans_decoded(span);
++        }
++    }
++
++    fn push_text_spans_decoded(&mut self, span: Span<'static>) {
++        let span = self.style_link_label(span);
+         let destination = self
+             .link
+             .as_ref()
+diff --git a/codex-rs/tui/src/markdown_render/acpc_ansi.rs b/codex-rs/tui/src/markdown_render/acpc_ansi.rs
+new file mode 100644
+index 0000000..0c7e4dd
+--- /dev/null
++++ b/codex-rs/tui/src/markdown_render/acpc_ansi.rs
+@@ -0,0 +1,98 @@
++//! Decode agent-supplied ANSI styling before measuring or wrapping Markdown spans.
++//!
++//! Keep the style across Markdown events (e.g. a bold translation), while leaving
++//! Markdown's own styles in place when an ANSI attribute is reset. Never pass
++//! terminal control sequences through to the transcript.
++
++use codex_ansi_escape::ansi_escape_line;
++use itertools::Either;
++use ratatui::style::Color;
++use ratatui::style::Modifier;
++use ratatui::style::Style;
++use ratatui::text::Span;
++
++#[derive(Default)]
++pub(super) struct AnsiText {
++    style: Style,
++}
++
++impl AnsiText {
++    pub(super) fn spans(
++        &mut self,
++        span: Span<'static>,
++    ) -> impl Iterator<Item = Span<'static>> + use<> {
++        if !crate::acpc::enabled() {
++            return Either::Left(std::iter::once(span));
++        }
++        if !span.content.contains('\x1b') {
++            let style = span.style.patch(self.style);
++            return Either::Left(std::iter::once(span.style(style)));
++        }
++        let mut spans = Vec::new();
++        let mut remaining = span.content.as_ref();
++        while let Some(start) = remaining.find('\x1b') {
++            if start > 0 {
++                spans.push(Span::styled(
++                    remaining[..start].to_owned(),
++                    span.style.patch(self.style),
++                ));
++            }
++            remaining = &remaining[start..];
++            let end = escape_end(remaining);
++            let sequence = &remaining[..end];
++            if sequence.starts_with("\x1b[") && sequence.ends_with('m') {
++                let decoded = ansi_escape_line(&format!("{sequence}x"));
++                if let Some(last) = decoded.spans.last() {
++                    self.style = self.style.patch(last.style);
++                    for color in [
++                        &mut self.style.fg,
++                        &mut self.style.bg,
++                        &mut self.style.underline_color,
++                    ] {
++                        if *color == Some(Color::Reset) {
++                            *color = None;
++                        }
++                    }
++                    self.style.sub_modifier = Modifier::empty();
++                }
++            }
++            remaining = &remaining[end..];
++        }
++        if !remaining.is_empty() {
++            spans.push(Span::styled(
++                remaining.to_owned(),
++                span.style.patch(self.style),
++            ));
++        }
++        Either::Right(spans.into_iter())
++    }
++}
++
++/// Consume a whole escape, including incomplete streaming suffixes. OSC/DCS
++/// strings end at BEL or ST; their payload must not become visible text.
++fn escape_end(input: &str) -> usize {
++    let bytes = input.as_bytes();
++    match bytes.get(1) {
++        Some(b'[') => bytes
++            .iter()
++            .enumerate()
++            .skip(2)
++            .find(|(_, byte)| (0x40..=0x7e).contains(*byte))
++            .map_or(input.len(), |(end, _)| end + 1),
++        Some(b']' | b'P' | b'X' | b'^' | b'_') => {
++            for index in 2..bytes.len() {
++                if bytes[index] == b'\x07' {
++                    return index + 1;
++                }
++                if bytes[index] == b'\x1b' && bytes.get(index + 1) == Some(&b'\\') {
++                    return index + 2;
++                }
++            }
++            input.len()
++        }
++        _ => input
++            .char_indices()
++            .nth(2)
++            .map_or(input.len(), |(end, _)| end),
++    }
++}
+diff --git a/codex-rs/tui/src/markdown_render/acpc_ansi_tests.rs b/codex-rs/tui/src/markdown_render/acpc_ansi_tests.rs
+new file mode 100644
+index 0000000..19d7c26
+--- /dev/null
++++ b/codex-rs/tui/src/markdown_render/acpc_ansi_tests.rs
+@@ -0,0 +1,199 @@
++//! ACP agents can mix plugin-supplied ANSI styles with Markdown source.
++
++use super::ListSpacing;
++use super::render_markdown_text_with_width;
++use super::render_streaming_markdown_lines_with_width_and_cwd;
++use pretty_assertions::assert_eq;
++use ratatui::style::Color;
++use ratatui::style::Modifier;
++use ratatui::text::Text;
++
++#[test]
++fn bbilingual_translation_keeps_gray_without_escape_text() {
++    let _acpc = crate::acpc::enable_for_test();
++    let rendered = render_markdown_text_with_width(
++        "English.\n**\x1b[90mACP (Agent Client Protocol)\x1b[39m**\x1b[90m 是一个开放的、基于JSON-RPC的标准。\x1b[39m\nEnglish again.",
++        Some(120),
++    );
++
++    assert_eq!(
++        rendered.to_string(),
++        "English.\nACP (Agent Client Protocol) 是一个开放的、基于JSON-RPC的标准。\nEnglish again."
++    );
++    let translation = rendered.lines[1]
++        .spans
++        .iter()
++        .find(|span| span.content.contains("ACP"));
++    assert_eq!(
++        translation.map(|span| span.style.fg),
++        Some(Some(Color::DarkGray))
++    );
++    assert!(translation.is_some_and(|span| span.style.add_modifier.contains(Modifier::BOLD)));
++    assert!(
++        rendered.lines[2]
++            .spans
++            .iter()
++            .all(|span| span.style.fg != Some(Color::DarkGray))
++    );
++}
++
++#[test]
++fn ansi_styles_compose_with_markdown_and_reset_after_it() {
++    let _acpc = crate::acpc::enable_for_test();
++    let rendered = render_markdown_text_with_width(
++        "\x1b[90m翻译 **粗体** 与 `code`。\x1b[0m\nEnglish.",
++        Some(80),
++    );
++
++    assert_eq!(rendered.to_string(), "翻译 粗体 与 code。\nEnglish.");
++    let bold = rendered.lines[0]
++        .spans
++        .iter()
++        .find(|span| span.content.contains("粗体"));
++    assert!(bold.is_some_and(|span| span.style.add_modifier.contains(Modifier::BOLD)));
++    assert_eq!(bold.map(|span| span.style.fg), Some(Some(Color::DarkGray)));
++    assert!(
++        rendered.lines[1]
++            .spans
++            .iter()
++            .all(|span| span.style.fg != Some(Color::DarkGray))
++    );
++}
++
++#[test]
++fn styled_cjk_wraps_like_the_same_unstyled_text() {
++    let _acpc = crate::acpc::enable_for_test();
++    let plain = "- Fast\n  快速响应并保持中英文排版一致。\n- Safe\n  安全可靠。";
++    let styled = "- Fast\n  \x1b[90m快速响应并保持中英文排版一致。\x1b[39m\n- Safe\n  \x1b[90m安全可靠。\x1b[39m";
++
++    for width in [12, 20, 40] {
++        assert_eq!(
++            render_markdown_text_with_width(styled, Some(width)).to_string(),
++            render_markdown_text_with_width(plain, Some(width)).to_string(),
++            "ANSI sequences must not consume display columns at width {width}",
++        );
++    }
++}
++
++#[test]
++fn styled_table_cells_use_visible_widths() {
++    let _acpc = crate::acpc::enable_for_test();
++    let plain = "| Name | Value |\n| --- | --- |\n| 状态 | Ready |\n| 结果 | 成功 |";
++    let styled = "| Name | Value |\n| --- | --- |\n| \x1b[90m状态\x1b[39m | Ready |\n| 结果 | \x1b[32m成功\x1b[0m |";
++
++    for width in [20, 60] {
++        assert_eq!(
++            render_markdown_text_with_width(styled, Some(width)).to_string(),
++            render_markdown_text_with_width(plain, Some(width)).to_string(),
++            "ANSI sequences must not alter table layout at width {width}",
++        );
++    }
++}
++
++#[test]
++fn streaming_partial_sgr_never_draws_escape_fragments() {
++    let _acpc = crate::acpc::enable_for_test();
++    let source = "Hello\n\x1b[90m你好\x1b[39m";
++    for end in source
++        .char_indices()
++        .map(|(index, _)| index)
++        .chain([source.len()])
++    {
++        let rendered = render_streaming_markdown_lines_with_width_and_cwd(
++            &source[..end],
++            Some(20),
++            None,
++            &|_| false,
++            ListSpacing::AfterMultiline,
++        );
++        let visible =
++            Text::from(crate::terminal_hyperlinks::visible_lines(rendered.lines)).to_string();
++        assert!(
++            !visible.contains('\x1b'),
++            "raw ESC at source boundary {end}: {visible:?}"
++        );
++        assert!(
++            !visible.contains('['),
++            "partial SGR at source boundary {end}: {visible:?}"
++        );
++    }
++}
++
++#[test]
++fn indexed_and_rgb_colors_survive_markdown_rendering() {
++    let _acpc = crate::acpc::enable_for_test();
++    let rendered = render_markdown_text_with_width(
++        "\x1b[38;5;123mIndexed\x1b[39m and \x1b[38;2;12;34;56mRGB\x1b[0m.",
++        Some(80),
++    );
++
++    assert_eq!(rendered.to_string(), "Indexed and RGB.");
++    for (label, color) in [
++        ("Indexed", Color::Indexed(123)),
++        ("RGB", Color::Rgb(12, 34, 56)),
++    ] {
++        let span = rendered.lines[0]
++            .spans
++            .iter()
++            .find(|span| span.content.contains(label));
++        assert_eq!(span.map(|span| span.style.fg), Some(Some(color)));
++    }
++}
++
++#[test]
++fn ansi_reset_inside_markdown_bold_preserves_markdown_bold() {
++    let _acpc = crate::acpc::enable_for_test();
++    let rendered = render_markdown_text_with_width("**\x1b[1;90mBefore \x1b[0mAfter**", Some(80));
++
++    assert_eq!(rendered.to_string(), "Before After");
++    let after = rendered.lines[0]
++        .spans
++        .iter()
++        .find(|span| span.content.contains("After"));
++    assert!(after.is_some_and(|span| span.style.add_modifier.contains(Modifier::BOLD)));
++    assert!(after.is_some_and(|span| span.style.fg != Some(Color::DarkGray)));
++}
++
++#[test]
++fn non_sgr_controls_are_discarded_instead_of_rendered() {
++    let _acpc = crate::acpc::enable_for_test();
++    let rendered = render_markdown_text_with_width(
++        "\x1b[2JStart \x1b]0;private-title\x07middle \x1b]8;;https://example.com\x1b\\label\x1b]8;;\x1b\\ end.",
++        Some(80),
++    );
++
++    assert_eq!(rendered.to_string(), "Start middle label end.");
++}
++
++#[test]
++fn ansi_looking_plain_text_without_escape_stays_literal() {
++    let _acpc = crate::acpc::enable_for_test();
++    let rendered = render_markdown_text_with_width("[90m你好[39m", Some(80));
++
++    assert_eq!(rendered.to_string(), "[90m你好[39m");
++}
++
++#[test]
++fn ansi_decoding_is_disabled_outside_acpc_mode() {
++    let source = "\x1b[90mHello\x1b[39m";
++
++    assert_eq!(
++        render_markdown_text_with_width(source, Some(80)).to_string(),
++        source
++    );
++}
++
++#[test]
++fn streaming_block_offsets_still_index_the_original_source() {
++    let _acpc = crate::acpc::enable_for_test();
++    let source = "\x1b[90mFirst block.\x1b[39m\n\nSecond block.";
++    let rendered = render_streaming_markdown_lines_with_width_and_cwd(
++        source,
++        Some(80),
++        None,
++        &|_| false,
++        ListSpacing::AfterMultiline,
++    );
++
++    assert_eq!(rendered.last_top_level_block_start, source.find("Second"));
++}

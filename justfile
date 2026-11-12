@@ -23,6 +23,7 @@ check *args:
 # Bridge integration tests drive the mock agent binary, so build it first.
 test *args:
     cd {{codex_rs}} && {{cargo}} build -p acpc-mock-agent && {{cargo}} test -p acp-client -p acp-bridge -p acpc -p acpc-mock-agent {{args}}
+    cd {{codex_rs}} && {{cargo}} test -p codex-tui --lib acpc_ansi_tests {{args}}
 
 # Drive the real TUI in tmux against the mock agent.
 smoke: build

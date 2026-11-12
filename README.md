@@ -239,6 +239,7 @@ applied. `patches/*.patch` are the patches, in order:
 6. Number and multi-select fields in elicitation forms.
 7. Upstream schema fixture tests skipped, since the fixtures don't include
    `acpc/*`.
+8. ANSI styles in ACP replies decoded before Markdown wrapping and table layout.
 
 To change upstream code:
 1. Edit and commit in `third_party/codex`.
