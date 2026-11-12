@@ -1,5 +1,8 @@
 //! End-to-end: app-server client ⇄ bridge ⇄ ACP mock agent.
 
+// Fixture helpers outside #[test] fns expect well-formed JSON too.
+#![allow(clippy::expect_used)]
+
 mod common;
 
 use std::time::Duration;

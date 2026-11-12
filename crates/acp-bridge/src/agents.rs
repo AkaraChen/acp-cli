@@ -197,7 +197,7 @@ fn pump_events(
                 .send(Input::Agent {
                     slug: slug.clone(),
                     generation,
-                    event,
+                    event: Box::new(event),
                 })
                 .is_err()
             {

@@ -173,7 +173,8 @@ pub(crate) enum Input {
     Agent {
         slug: String,
         generation: u64,
-        event: AgentEvent,
+        // Boxed: agent events are large, and every Apply would carry their size.
+        event: Box<AgentEvent>,
     },
     Apply(Apply),
 }
@@ -250,7 +251,7 @@ impl Bridge {
                 slug,
                 generation,
                 event,
-            } => self.on_agent_event(&slug, generation, event),
+            } => self.on_agent_event(&slug, generation, *event),
             Input::Apply(apply) => apply(self),
         }
     }

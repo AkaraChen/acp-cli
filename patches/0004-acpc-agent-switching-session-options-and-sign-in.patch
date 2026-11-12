@@ -12,7 +12,7 @@ terminal (acpc/terminal/run) while it is pending.
 ---
  codex-rs/tui/src/acpc.rs                      | 117 +++++++
  codex-rs/tui/src/app.rs                       |   1 +
- codex-rs/tui/src/app/acpc.rs                  | 282 +++++++++++++++
+ codex-rs/tui/src/app/acpc.rs                  | 284 +++++++++++++++
  codex-rs/tui/src/app/app_server_events.rs     |   3 +
  codex-rs/tui/src/app/event_dispatch.rs        |   3 +
  codex-rs/tui/src/app/tests/startup.rs         |  27 ++
@@ -25,7 +25,7 @@ terminal (acpc/terminal/run) while it is pending.
  codex-rs/tui/src/lib.rs                       |  29 +-
  codex-rs/tui/src/resume_picker.rs             |  23 +-
  codex-rs/tui/src/slash_command.rs             |   9 +
- 15 files changed, 911 insertions(+), 12 deletions(-)
+ 15 files changed, 913 insertions(+), 12 deletions(-)
  create mode 100644 codex-rs/tui/src/app/acpc.rs
 
 diff --git a/codex-rs/tui/src/acpc.rs b/codex-rs/tui/src/acpc.rs
@@ -174,10 +174,10 @@ index 84a42c3..d9b88ce 100644
  mod agent_picker;
 diff --git a/codex-rs/tui/src/app/acpc.rs b/codex-rs/tui/src/app/acpc.rs
 new file mode 100644
-index 0000000..3d2d2f1
+index 0000000..cf922a2
 --- /dev/null
 +++ b/codex-rs/tui/src/app/acpc.rs
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,284 @@
 +//! acpc: app-level handling of ACP agent switching, session options and
 +//! sign-in (see `crate::acpc`).
 +
@@ -350,6 +350,8 @@ index 0000000..3d2d2f1
 +
 +/// Give the terminal to `params.command` until it exits (ACP terminal
 +/// sign-in), then take it back.
++// The TUI is suspended here, so plain stdout is the terminal the user sees.
++#[allow(clippy::print_stdout)]
 +async fn run_in_terminal(tui: &mut tui::Tui, params: &AcpcTerminalRunParams) -> std::io::Result<Option<i32>> {
 +    tui.with_restored(tui::TerminalHandoff::Restore, || async {
 +        // Ctrl+C reaches the whole foreground group once raw mode is off;
