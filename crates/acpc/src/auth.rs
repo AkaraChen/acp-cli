@@ -46,7 +46,17 @@ pub async fn connect_with_auth(
         .await
         .with_context(|| format!("could not start agent `{}`", profile.slug))?;
     let mut held = Vec::new();
-    let result = sign_in_and_open(profile, client, cwd, connection, events, new_session, force_login, &mut held).await;
+    let result = sign_in_and_open(
+        profile,
+        client,
+        cwd,
+        connection,
+        events,
+        new_session,
+        force_login,
+        &mut held,
+    )
+    .await;
     result.map(|mut connected| {
         connected.events = replay_held(held, connected.events);
         connected
@@ -145,7 +155,8 @@ async fn sign_in_and_open(
         // `acpc resume` opens no session here; listing them is where the
         // agent says whether it needs a sign-in first.
         if !force_login && connection.caps().list_sessions() {
-            (connection, events) = probe_sessions(profile, client, cwd, connection, events, held).await?;
+            (connection, events) =
+                probe_sessions(profile, client, cwd, connection, events, held).await?;
         }
         return Ok(Connected {
             connection,
@@ -160,7 +171,15 @@ async fn sign_in_and_open(
                 .filter_mcp_servers(new_session.mcp_servers.clone()),
         );
         let waiting = format!("{} to create a session", profile.name);
-        match answering(&waiting, connection.new_session(request), &connection, &mut events, held).await {
+        match answering(
+            &waiting,
+            connection.new_session(request),
+            &connection,
+            &mut events,
+            held,
+        )
+        .await
+        {
             Ok(session) => {
                 return Ok(Connected {
                     connection,
@@ -175,7 +194,11 @@ async fn sign_in_and_open(
                     authenticate(profile, client, connection, events, held).await?;
             }
             Err(err) if err.is_auth_required() => {
-                bail!("{} still requires authentication: {}", profile.name, err.message)
+                bail!(
+                    "{} still requires authentication: {}",
+                    profile.name,
+                    err.message
+                )
             }
             Err(err) => bail!(
                 "{} could not create a session: {}{}",
@@ -199,7 +222,15 @@ async fn probe_sessions(
     loop {
         let request = acp::ListSessionsRequest::new().cwd(cwd.to_path_buf());
         let waiting = format!("{} to list sessions", profile.name);
-        match answering(&waiting, connection.list_sessions(request), &connection, &mut events, held).await {
+        match answering(
+            &waiting,
+            connection.list_sessions(request),
+            &connection,
+            &mut events,
+            held,
+        )
+        .await
+        {
             Ok(_) => return Ok((connection, events)),
             Err(err) if err.is_auth_required() && !attempted => {
                 attempted = true;
@@ -208,7 +239,11 @@ async fn probe_sessions(
                     authenticate(profile, client, connection, events, held).await?;
             }
             Err(err) if err.is_auth_required() => {
-                bail!("{} still requires authentication: {}", profile.name, err.message)
+                bail!(
+                    "{} still requires authentication: {}",
+                    profile.name,
+                    err.message
+                )
             }
             // The TUI lists sessions itself and reports other failures.
             Err(err) => {
@@ -265,9 +300,21 @@ async fn authenticate(
         acp::AuthMethod::Agent(agent) => {
             eprintln!("Signing in with {}…", agent.name);
             let waiting = format!("{} to finish signing in", profile.name);
-            answering(&waiting, connection.authenticate(agent.id.clone()), &connection, &mut events, held)
-                .await
-                .map_err(|err| anyhow::anyhow!("sign-in failed: {}{}", err.message, stderr_note(&connection)))?;
+            answering(
+                &waiting,
+                connection.authenticate(agent.id.clone()),
+                &connection,
+                &mut events,
+                held,
+            )
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "sign-in failed: {}{}",
+                    err.message,
+                    stderr_note(&connection)
+                )
+            })?;
             Ok((connection, events))
         }
         _ => bail!("unsupported sign-in method"),
@@ -288,7 +335,12 @@ fn method_label(method: &acp::AuthMethod) -> (String, Option<String>) {
 fn choose_method(methods: &[acp::AuthMethod]) -> anyhow::Result<acp::AuthMethod> {
     let supported: Vec<&acp::AuthMethod> = methods
         .iter()
-        .filter(|method| matches!(method, acp::AuthMethod::Agent(_) | acp::AuthMethod::Terminal(_)))
+        .filter(|method| {
+            matches!(
+                method,
+                acp::AuthMethod::Agent(_) | acp::AuthMethod::Terminal(_)
+            )
+        })
         .collect();
     match supported.as_slice() {
         [] => bail!("the agent offers no sign-in method acpc supports"),
@@ -390,7 +442,8 @@ impl IgnoreTerminalSignals {
                         ignore.sa_sigaction = libc::SIG_IGN;
                         libc::sigemptyset(&mut ignore.sa_mask);
                         let mut previous: libc::sigaction = std::mem::zeroed();
-                        (libc::sigaction(signal, &ignore, &mut previous) == 0).then_some((signal, previous))
+                        (libc::sigaction(signal, &ignore, &mut previous) == 0)
+                            .then_some((signal, previous))
                     }
                 })
                 .collect();
@@ -438,6 +491,9 @@ mod tests {
             escaped("/tmp/evil:\u{1b}[2K\r  PATH=/usr/bin\u{202e}"),
             "/tmp/evil:\\u{1b}[2K\\r  PATH=/usr/bin\\u{202e}"
         );
-        assert_eq!(escaped("npx -y agent@1 --ünïcode"), "npx -y agent@1 --ünïcode");
+        assert_eq!(
+            escaped("npx -y agent@1 --ünïcode"),
+            "npx -y agent@1 --ünïcode"
+        );
     }
 }

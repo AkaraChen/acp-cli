@@ -89,6 +89,7 @@ impl Home {
     }
 
     pub fn socket_path(&self) -> PathBuf {
-        self.run_dir.join(format!("bridge-{}.sock", std::process::id()))
+        self.run_dir
+            .join(format!("bridge-{}.sock", std::process::id()))
     }
 }

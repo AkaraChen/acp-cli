@@ -38,7 +38,11 @@ use crate::turn::TurnBuilder;
 const THREAD_NAMESPACE: Uuid = Uuid::from_u128(0x6163_7063_2d74_6872_6561_642d_6964_7331);
 
 pub(crate) fn thread_id_for(agent: &str, session_id: &str) -> String {
-    Uuid::new_v5(&THREAD_NAMESPACE, format!("{agent}\n{session_id}").as_bytes()).to_string()
+    Uuid::new_v5(
+        &THREAD_NAMESPACE,
+        format!("{agent}\n{session_id}").as_bytes(),
+    )
+    .to_string()
 }
 
 pub(crate) struct ActiveTurn {
@@ -169,7 +173,11 @@ impl Threads {
             .collect()
     }
 
-    pub(crate) fn by_session_mut(&mut self, agent: &str, session_id: &acp::SessionId) -> Option<&mut ThreadState> {
+    pub(crate) fn by_session_mut(
+        &mut self,
+        agent: &str,
+        session_id: &acp::SessionId,
+    ) -> Option<&mut ThreadState> {
         let id = thread_id_for(agent, &session_id.to_string());
         self.by_id.get_mut(&id)
     }
@@ -300,7 +308,12 @@ fn on_session_update(bridge: &mut Bridge, agent: &str, notification: acp::Sessio
                 .or_else(|| thread.turns.last().map(|turn| turn.id.clone()))
                 .unwrap_or_default();
             if thread.replay.is_none() {
-                emit.push(usage_updated(&thread_id, &turn_id, update.used, update.size));
+                emit.push(usage_updated(
+                    &thread_id,
+                    &turn_id,
+                    update.used,
+                    update.size,
+                ));
             }
             emit_all(bridge, emit);
             return;
@@ -346,7 +359,12 @@ pub(crate) fn settings_updated(thread: &ThreadState, yolo: bool) -> ServerNotifi
     })
 }
 
-pub(crate) fn usage_updated(thread_id: &str, turn_id: &str, used: u64, size: u64) -> ServerNotification {
+pub(crate) fn usage_updated(
+    thread_id: &str,
+    turn_id: &str,
+    used: u64,
+    size: u64,
+) -> ServerNotification {
     let used = i64::try_from(used).unwrap_or(i64::MAX);
     let breakdown = TokenUsageBreakdown {
         total_tokens: used,
@@ -405,7 +423,16 @@ pub(crate) fn start(
                 let result = connection.new_session(request).await;
                 move |bridge: &mut Bridge| match result {
                     Ok(response) => {
-                        adopt_new_session(bridge, conn, id, &agent, cwd, &connection, response, fork);
+                        adopt_new_session(
+                            bridge,
+                            conn,
+                            id,
+                            &agent,
+                            cwd,
+                            &connection,
+                            response,
+                            fork,
+                        );
                     }
                     Err(err) => {
                         let code = if err.is_auth_required() {
@@ -417,7 +444,10 @@ pub(crate) fn start(
                             conn,
                             id,
                             code,
-                            format!("agent `{agent}` could not create a session: {}", err.message),
+                            format!(
+                                "agent `{agent}` could not create a session: {}",
+                                err.message
+                            ),
                         );
                     }
                 }
@@ -461,7 +491,10 @@ fn adopt_new_session(
     state.apply_session_setup(response.config_options, response.modes);
     // A fork shows the source's turns; the agent gets them as a transcript
     // with the first prompt.
-    if let Some(source) = fork.as_deref().and_then(|source| bridge.threads.get(source)) {
+    if let Some(source) = fork
+        .as_deref()
+        .and_then(|source| bridge.threads.get(source))
+    {
         state.turns = source.turns.clone();
         state.handoff = crate::handoff::build(source);
         state.forked_from = crate::handoff::Parent::of(source);
@@ -478,7 +511,9 @@ fn adopt_new_session(
         on_session_update(bridge, agent, update);
     }
     bridge.respond(conn, id, reply);
-    bridge.notify(ServerNotification::ThreadStarted(ThreadStartedNotification { thread }));
+    bridge.notify(ServerNotification::ThreadStarted(
+        ThreadStartedNotification { thread },
+    ));
     if let Some(state) = bridge.threads.get(&thread_id) {
         crate::ext::thread_state(bridge, state);
     }
@@ -486,7 +521,12 @@ fn adopt_new_session(
 
 /// Remember `thread_id` (and its agent) for the `acpc resume` hint if its
 /// agent can list and reopen sessions.
-pub(crate) fn note_resumable(bridge: &Bridge, thread_id: &str, agent: &str, connection: &AgentConnection) {
+pub(crate) fn note_resumable(
+    bridge: &Bridge,
+    thread_id: &str,
+    agent: &str,
+    connection: &AgentConnection,
+) {
     let caps = connection.caps();
     if caps.list_sessions() && (caps.load_session() || caps.resume_session()) {
         bridge
@@ -498,7 +538,11 @@ pub(crate) fn note_resumable(bridge: &Bridge, thread_id: &str, agent: &str, conn
     }
 }
 
-pub(crate) fn agent_display_name(bridge: &Bridge, agent: &str, connection: &AgentConnection) -> String {
+pub(crate) fn agent_display_name(
+    bridge: &Bridge,
+    agent: &str,
+    connection: &AgentConnection,
+) -> String {
     bridge
         .agents
         .profile(agent)
@@ -517,11 +561,21 @@ pub(crate) fn start_turn(
     settings: TurnSettings,
 ) {
     let Some(thread) = bridge.threads.get(thread_id) else {
-        bridge.respond_error(conn, id, crate::server::INVALID_REQUEST, format!("unknown thread {thread_id}"));
+        bridge.respond_error(
+            conn,
+            id,
+            crate::server::INVALID_REQUEST,
+            format!("unknown thread {thread_id}"),
+        );
         return;
     };
     if thread.active.is_some() {
-        bridge.respond_error(conn, id, crate::server::INVALID_REQUEST, "a turn is already running");
+        bridge.respond_error(
+            conn,
+            id,
+            crate::server::INVALID_REQUEST,
+            "a turn is already running",
+        );
         return;
     }
     let Some(session_id) = thread.session_id.clone().filter(|_| thread.loaded) else {
@@ -535,7 +589,12 @@ pub(crate) fn start_turn(
     };
     let agent = thread.agent.clone();
     let Some(connection) = bridge.agents.connection(&agent) else {
-        bridge.respond_error(conn, id, crate::server::INTERNAL_ERROR, format!("agent `{agent}` is not running"));
+        bridge.respond_error(
+            conn,
+            id,
+            crate::server::INTERNAL_ERROR,
+            format!("agent `{agent}` is not running"),
+        );
         return;
     };
     let cwd = thread.cwd.as_path().to_path_buf();
@@ -574,7 +633,14 @@ pub(crate) fn start_turn(
         prompt_id: None,
         cancel_requested: false,
     });
-    let turn = records::turn(&turn_id, Vec::new(), TurnStatus::InProgress, None, Some(started_at), None);
+    let turn = records::turn(
+        &turn_id,
+        Vec::new(),
+        TurnStatus::InProgress,
+        None,
+        Some(started_at),
+        None,
+    );
     bridge.respond(
         conn,
         id,
@@ -585,11 +651,16 @@ pub(crate) fn start_turn(
         turn,
     }));
     if let Some(handoff) = handoff {
-        prompt.insert(0, crate::handoff::block(&handoff, connection.caps().prompt_embedded_context()));
+        prompt.insert(
+            0,
+            crate::handoff::block(&handoff, connection.caps().prompt_embedded_context()),
+        );
     }
 
     bridge.spawn(async move {
-        let (options, error) = settings.apply(&connection, &session_id, current_options).await;
+        let (options, error) = settings
+            .apply(&connection, &session_id, current_options)
+            .await;
         if let Some(error) = error {
             tracing::warn!("failed to apply turn settings: {error}");
         }
@@ -606,7 +677,10 @@ pub(crate) fn start_turn(
                 return;
             };
             // Interrupted (and already finished) while settings were applied.
-            let Some(active) = thread.active.as_mut().filter(|active| active.builder.id == turn_id)
+            let Some(active) = thread
+                .active
+                .as_mut()
+                .filter(|active| active.builder.id == turn_id)
             else {
                 return;
             };
@@ -760,7 +834,9 @@ fn finish_turn(
                 ),
                 acp::StopReason::Refusal => (
                     TurnStatus::Completed,
-                    Some("The agent refused to continue. This prompt was not added to its context."),
+                    Some(
+                        "The agent refused to continue. This prompt was not added to its context.",
+                    ),
                 ),
                 _ => (TurnStatus::Completed, None),
             };
@@ -823,10 +899,12 @@ pub(crate) fn finish_turn_with(
     thread.updated_at = records::now_secs();
     crate::approvals::abandon_turn_requests(bridge, thread_id, &turn_id);
     emit_all(bridge, emit);
-    bridge.notify(ServerNotification::TurnCompleted(TurnCompletedNotification {
-        thread_id: thread_id.to_string(),
-        turn,
-    }));
+    bridge.notify(ServerNotification::TurnCompleted(
+        TurnCompletedNotification {
+            thread_id: thread_id.to_string(),
+            turn,
+        },
+    ));
 }
 
 /// The agent process died: fail running turns and unload its sessions.
@@ -880,6 +958,9 @@ pub(crate) fn unload_agent_threads(bridge: &mut Bridge, agent: &str, message: &s
     any
 }
 
-pub(crate) fn connection_for(bridge: &Bridge, thread: &ThreadState) -> Option<Arc<AgentConnection>> {
+pub(crate) fn connection_for(
+    bridge: &Bridge,
+    thread: &ThreadState,
+) -> Option<Arc<AgentConnection>> {
     bridge.agents.connection(&thread.agent)
 }

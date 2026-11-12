@@ -10,7 +10,9 @@ use toml_edit::DocumentMut;
 use crate::config::Config;
 
 /// Programs that run a package; the agent is named by the package.
-const LAUNCHERS: &[&str] = &["npx", "pnpx", "bunx", "uvx", "pipx", "pnpm", "yarn", "bun", "uv", "deno"];
+const LAUNCHERS: &[&str] = &[
+    "npx", "pnpx", "bunx", "uvx", "pipx", "pnpm", "yarn", "bun", "uv", "deno",
+];
 /// Launcher subcommands that come before the package (`pnpm dlx pkg`).
 const LAUNCHER_SUBCOMMANDS: &[&str] = &["dlx", "x", "exec", "run", "tool"];
 
@@ -34,15 +36,23 @@ pub fn add_agent(path: &Path, request: AddAgent) -> anyhow::Result<Added> {
     let argv = command_line(&request.command)?;
     let slug = match request.slug {
         Some(slug) => slug,
-        None => derive_slug(&argv).context("cannot name this agent from its command; pass --slug")?,
+        None => {
+            derive_slug(&argv).context("cannot name this agent from its command; pass --slug")?
+        }
     };
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
     };
-    let (updated, default) = add_to(&text, &argv, &slug, request.name.as_deref(), request.make_default)
-        .with_context(|| format!("updating {}", path.display()))?;
+    let (updated, default) = add_to(
+        &text,
+        &argv,
+        &slug,
+        request.name.as_deref(),
+        request.make_default,
+    )
+    .with_context(|| format!("updating {}", path.display()))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -50,7 +60,9 @@ pub fn add_agent(path: &Path, request: AddAgent) -> anyhow::Result<Added> {
     let staged = path.with_extension("toml.new");
     std::fs::write(&staged, updated).with_context(|| format!("writing {}", staged.display()))?;
     std::fs::rename(&staged, path).with_context(|| format!("writing {}", path.display()))?;
-    let command_found = crate::config::find_command(Path::new(&argv[0]), std::env::var_os("PATH").as_deref()).is_some();
+    let command_found =
+        crate::config::find_command(Path::new(&argv[0]), std::env::var_os("PATH").as_deref())
+            .is_some();
     Ok(Added {
         slug,
         default,
@@ -61,7 +73,8 @@ pub fn add_agent(path: &Path, request: AddAgent) -> anyhow::Result<Added> {
 /// `["opencode acp"]` → `["opencode", "acp"]`; several words are taken as is.
 fn command_line(words: &[String]) -> anyhow::Result<Vec<String>> {
     let argv = match words {
-        [line] => shlex::split(line).with_context(|| format!("cannot parse `{line}` (unbalanced quotes?)"))?,
+        [line] => shlex::split(line)
+            .with_context(|| format!("cannot parse `{line}` (unbalanced quotes?)"))?,
         words => words.to_vec(),
     };
     if argv.first().is_none_or(|program| program.trim().is_empty()) {
@@ -84,7 +97,13 @@ fn derive_slug(argv: &[String]) -> Option<String> {
     };
     let slug: String = word
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     let slug = slug.trim_matches('-').to_string();
     (!slug.is_empty()).then_some(slug)
@@ -178,7 +197,10 @@ mod tests {
             ("opencode acp", "opencode"),
             ("/usr/local/bin/goose acp", "goose"),
             ("gemini --experimental-acp", "gemini"),
-            ("npx -y @agentclientprotocol/claude-agent-acp@latest", "claude-agent-acp"),
+            (
+                "npx -y @agentclientprotocol/claude-agent-acp@latest",
+                "claude-agent-acp",
+            ),
             ("pnpm dlx codex-acp@0.3", "codex-acp"),
             ("uvx some_agent==1.2 --acp", "some_agent"),
             ("deno run npm:@scope/My.Agent", "my-agent"),
@@ -197,7 +219,8 @@ mod tests {
 
     #[test]
     fn first_agent_becomes_the_default() {
-        let (text, default) = add_to("", &words("opencode acp"), "opencode", None, false).expect("add");
+        let (text, default) =
+            add_to("", &words("opencode acp"), "opencode", None, false).expect("add");
         assert_eq!(default.as_deref(), Some("opencode"));
         assert_eq!(
             text,
@@ -209,17 +232,34 @@ mod tests {
     fn adding_keeps_the_file_and_the_previous_default() {
         let before = "# my agents\n\n[[agents]]\nslug = \"claude\" # the main one\ncommand = \"claude-acp\"\n";
         let argv = words("opencode acp");
-        let (text, default) = add_to(before, &argv, "opencode", Some("OpenCode"), false).expect("add");
+        let (text, default) =
+            add_to(before, &argv, "opencode", Some("OpenCode"), false).expect("add");
         assert_eq!(default.as_deref(), Some("claude"));
-        assert!(text.contains("# my agents") && text.contains("# the main one"), "{text}");
+        assert!(
+            text.contains("# my agents") && text.contains("# the main one"),
+            "{text}"
+        );
         let config: Config = toml::from_str(&text).expect("parse");
         assert_eq!(config.agent.as_deref(), Some("claude"));
         assert_eq!(config.agents[1].name.as_deref(), Some("OpenCode"));
         assert_eq!(config.agents[1].args, vec!["acp"]);
 
-        let (text, default) = add_to(&text, &words("gemini --experimental-acp"), "gemini", None, true).expect("add");
+        let (text, default) = add_to(
+            &text,
+            &words("gemini --experimental-acp"),
+            "gemini",
+            None,
+            true,
+        )
+        .expect("add");
         assert_eq!(default.as_deref(), Some("gemini"));
-        assert_eq!(toml::from_str::<Config>(&text).expect("parse").agent.as_deref(), Some("gemini"));
+        assert_eq!(
+            toml::from_str::<Config>(&text)
+                .expect("parse")
+                .agent
+                .as_deref(),
+            Some("gemini")
+        );
 
         let err = add_to(&text, &argv, "opencode", None, false).expect_err("duplicate");
         assert!(err.to_string().contains("already exists"), "{err}");

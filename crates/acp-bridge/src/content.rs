@@ -10,7 +10,11 @@ use codex_app_server_protocol::UserInput;
 /// Translate a Codex turn input into an ACP prompt, honouring the agent's
 /// prompt capabilities. Unsupported attachments become text notes rather
 /// than being sent against the spec.
-pub(crate) fn prompt_blocks(input: &[UserInput], caps: &AgentCaps, cwd: &Path) -> Vec<acp::ContentBlock> {
+pub(crate) fn prompt_blocks(
+    input: &[UserInput],
+    caps: &AgentCaps,
+    cwd: &Path,
+) -> Vec<acp::ContentBlock> {
     let mut blocks = Vec::new();
     for item in input {
         match item {
@@ -66,9 +70,10 @@ fn absolute(cwd: &Path, path: &Path) -> std::path::PathBuf {
 }
 
 fn link_block(path: &Path) -> acp::ContentBlock {
-    let name = path
-        .file_name()
-        .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
     acp::ContentBlock::ResourceLink(acp::ResourceLink::new(name, file_uri(path)))
 }
 
@@ -129,10 +134,12 @@ pub(crate) fn user_input(block: &acp::ContentBlock) -> Option<UserInput> {
         return None;
     }
     match block {
-        acp::ContentBlock::Text(text) => crate::handoff::strip(&text.text).map(|text| UserInput::Text {
-            text: text.to_string(),
-            text_elements: Vec::new(),
-        }),
+        acp::ContentBlock::Text(text) => {
+            crate::handoff::strip(&text.text).map(|text| UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            })
+        }
         acp::ContentBlock::ResourceLink(link) => {
             let path = link.uri.strip_prefix("file://").unwrap_or(&link.uri);
             Some(UserInput::Mention {

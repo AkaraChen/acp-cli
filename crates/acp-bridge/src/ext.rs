@@ -201,7 +201,9 @@ pub(crate) fn thread_state(bridge: &Bridge, thread: &ThreadState) {
             .map(|active| active.builder.id.clone())
             .or_else(|| thread.turns.last().map(|turn| turn.id.clone()))
             .unwrap_or_default();
-        emit.push(crate::threads::usage_updated(&thread.id, &turn_id, used, size));
+        emit.push(crate::threads::usage_updated(
+            &thread.id, &turn_id, used, size,
+        ));
     }
     crate::threads::emit_all(bridge, emit);
 }

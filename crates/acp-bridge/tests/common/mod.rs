@@ -37,7 +37,10 @@ pub const TIMEOUT: Duration = Duration::from_secs(20);
 pub fn mock_agent_path() -> PathBuf {
     let exe = std::env::current_exe().expect("test exe");
     // target/<profile>/deps/<test> → target/<profile>/acpc-mock-agent
-    let dir = exe.parent().and_then(|deps| deps.parent()).expect("target dir");
+    let dir = exe
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("target dir");
     let path = dir.join("acpc-mock-agent");
     assert!(
         path.exists(),
@@ -142,9 +145,14 @@ impl Harness {
         let resumable = Arc::clone(&options.resumable);
         let (tx, events) = mpsc::channel(128);
         let shutdown = CancellationToken::new();
-        acp_bridge::start(options, BridgeTransport::Channel(events), None, shutdown.clone())
-            .await
-            .expect("bridge");
+        acp_bridge::start(
+            options,
+            BridgeTransport::Channel(events),
+            None,
+            shutdown.clone(),
+        )
+        .await
+        .expect("bridge");
         let (writer, rx) = mpsc::channel(1024);
         tx.send(TransportEvent::ConnectionOpened {
             connection_id: ConnectionId(1),
@@ -167,7 +175,10 @@ impl Harness {
             resumable,
         };
         harness
-            .request("initialize", json!({"clientInfo": {"name": "test", "version": "0"}}))
+            .request(
+                "initialize",
+                json!({"clientInfo": {"name": "test", "version": "0"}}),
+            )
             .await
             .expect("initialize");
         harness.notify("initialized", None).await;
@@ -226,8 +237,9 @@ impl Harness {
             .find(|(sent, _)| *sent == id)
             .map(|(_, method)| method.clone())
             .unwrap_or_default();
-        let is_response =
-            |message: &Value| message.get("method").is_none() && message.get("id") == Some(&json!(id));
+        let is_response = |message: &Value| {
+            message.get("method").is_none() && message.get("id") == Some(&json!(id))
+        };
         let message = match self.pending.iter().position(is_response) {
             Some(index) => self.pending.remove(index).expect("index"),
             None => loop {
@@ -293,7 +305,11 @@ impl Harness {
     pub async fn methods_until(&mut self, method: &str) -> Vec<String> {
         let mut seen: Vec<String> = Vec::new();
         while let Some(message) = self.pending.pop_front() {
-            let name = message.get("method").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = message
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             seen.push(name.clone());
             if name == method {
                 return seen;
@@ -301,7 +317,11 @@ impl Harness {
         }
         loop {
             let message = self.recv().await;
-            let name = message.get("method").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = message
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             seen.push(name.clone());
             if name == method {
                 return seen;
@@ -320,7 +340,10 @@ impl Harness {
             .request("thread/start", json!({}))
             .await
             .expect("thread/start");
-        result["thread"]["id"].as_str().expect("thread id").to_string()
+        result["thread"]["id"]
+            .as_str()
+            .expect("thread id")
+            .to_string()
     }
 
     /// Start a thread on `agent` instead of the current one.
@@ -329,7 +352,10 @@ impl Harness {
             .request("thread/start", json!({"config": {"acpc.agent": agent}}))
             .await
             .expect("thread/start");
-        result["thread"]["id"].as_str().expect("thread id").to_string()
+        result["thread"]["id"]
+            .as_str()
+            .expect("thread id")
+            .to_string()
     }
 
     /// Close the connection, as a stdio client does by closing stdin.

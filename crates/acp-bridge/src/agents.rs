@@ -150,7 +150,9 @@ impl Agents {
         cwd: &AbsolutePathBuf,
     ) -> Option<acp::NewSessionResponse> {
         match &self.prepared {
-            Some((prepared_slug, prepared_cwd, _)) if prepared_slug == slug && prepared_cwd == cwd => {
+            Some((prepared_slug, prepared_cwd, _))
+                if prepared_slug == slug && prepared_cwd == cwd =>
+            {
                 self.prepared.take().map(|(_, _, session)| session)
             }
             _ => None,
@@ -211,14 +213,10 @@ pub(crate) fn with_agent(bridge: &mut Bridge, slug: &str, waiter: Waiter) {
         waiter(bridge, Err(format!("unknown agent `{slug}`")));
         return;
     };
-    let slot = bridge
-        .agents
-        .slots
-        .entry(slug.to_string())
-        .or_insert(Slot {
-            generation: 0,
-            state: SlotState::Idle,
-        });
+    let slot = bridge.agents.slots.entry(slug.to_string()).or_insert(Slot {
+        generation: 0,
+        state: SlotState::Idle,
+    });
     match &mut slot.state {
         SlotState::Ready(connection) => {
             let connection = Arc::clone(connection);

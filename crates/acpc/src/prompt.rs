@@ -107,15 +107,25 @@ fn ask(name: &str, property: &acp::ElicitationPropertySchema, required: bool) ->
     Some(parse(text, property, &choices))
 }
 
-fn parse(text: &str, property: &acp::ElicitationPropertySchema, choices: &[(String, String)]) -> Answer {
+fn parse(
+    text: &str,
+    property: &acp::ElicitationPropertySchema,
+    choices: &[(String, String)],
+) -> Answer {
     match property {
-        acp::ElicitationPropertySchema::String(_) if !choices.is_empty() => match pick(text, choices) {
-            Some(value) => Answer::Value(acp::ElicitationContentValue::String(value)),
-            None => Answer::Invalid("Pick one of the listed numbers.".to_string()),
-        },
+        acp::ElicitationPropertySchema::String(_) if !choices.is_empty() => {
+            match pick(text, choices) {
+                Some(value) => Answer::Value(acp::ElicitationContentValue::String(value)),
+                None => Answer::Invalid("Pick one of the listed numbers.".to_string()),
+            }
+        }
         acp::ElicitationPropertySchema::String(schema) => {
             let length = u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
-            match check(length, schema.min_length.map(u64::from), schema.max_length.map(u64::from)) {
+            match check(
+                length,
+                schema.min_length.map(u64::from),
+                schema.max_length.map(u64::from),
+            ) {
                 Ok(()) => Answer::Value(acp::ElicitationContentValue::String(text.to_string())),
                 Err(bounds) => Answer::Invalid(format!("Use {bounds} characters.")),
             }
@@ -145,7 +155,9 @@ fn parse(text: &str, property: &acp::ElicitationPropertySchema, choices: &[(Stri
                 .map(|part| pick(part.trim(), choices))
                 .collect();
             let Some(values) = picked else {
-                return Answer::Invalid("List numbers from above, separated by commas.".to_string());
+                return Answer::Invalid(
+                    "List numbers from above, separated by commas.".to_string(),
+                );
             };
             let count = u64::try_from(values.len()).unwrap_or(u64::MAX);
             match check(count, schema.min_items, schema.max_items) {
@@ -172,11 +184,14 @@ fn check<T: PartialOrd + Display>(value: T, min: Option<T>, max: Option<T>) -> R
     })
 }
 
-fn default_value(property: &acp::ElicitationPropertySchema) -> Option<acp::ElicitationContentValue> {
+fn default_value(
+    property: &acp::ElicitationPropertySchema,
+) -> Option<acp::ElicitationContentValue> {
     match property {
-        acp::ElicitationPropertySchema::String(schema) => {
-            schema.default.clone().map(acp::ElicitationContentValue::String)
-        }
+        acp::ElicitationPropertySchema::String(schema) => schema
+            .default
+            .clone()
+            .map(acp::ElicitationContentValue::String),
         acp::ElicitationPropertySchema::Integer(schema) => {
             schema.default.map(acp::ElicitationContentValue::Integer)
         }
@@ -186,9 +201,10 @@ fn default_value(property: &acp::ElicitationPropertySchema) -> Option<acp::Elici
         acp::ElicitationPropertySchema::Boolean(schema) => {
             schema.default.map(acp::ElicitationContentValue::Boolean)
         }
-        acp::ElicitationPropertySchema::Array(schema) => {
-            schema.default.clone().map(acp::ElicitationContentValue::StringArray)
-        }
+        acp::ElicitationPropertySchema::Array(schema) => schema
+            .default
+            .clone()
+            .map(acp::ElicitationContentValue::StringArray),
         _ => None,
     }
 }
@@ -219,7 +235,10 @@ fn pick(text: &str, choices: &[(String, String)]) -> Option<String> {
     choices.get(index).map(|(value, _)| value.clone())
 }
 
-fn labels<'a>(name: &'a str, property: &'a acp::ElicitationPropertySchema) -> (&'a str, Option<&'a str>) {
+fn labels<'a>(
+    name: &'a str,
+    property: &'a acp::ElicitationPropertySchema,
+) -> (&'a str, Option<&'a str>) {
     let (title, description) = match property {
         acp::ElicitationPropertySchema::String(schema) => (&schema.title, &schema.description),
         acp::ElicitationPropertySchema::Number(schema) => (&schema.title, &schema.description),
@@ -271,7 +290,10 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn accepted(text: &str, property: &acp::ElicitationPropertySchema) -> Option<acp::ElicitationContentValue> {
+    fn accepted(
+        text: &str,
+        property: &acp::ElicitationPropertySchema,
+    ) -> Option<acp::ElicitationContentValue> {
         match parse(text, property, &choices(property)) {
             Answer::Value(value) => Some(value),
             Answer::Skip | Answer::Invalid(_) => None,
@@ -280,23 +302,36 @@ mod tests {
 
     #[test]
     fn enforces_schema_bounds() {
-        let integer =
-            acp::ElicitationPropertySchema::Integer(acp::IntegerPropertySchema::new().minimum(1).maximum(10));
+        let integer = acp::ElicitationPropertySchema::Integer(
+            acp::IntegerPropertySchema::new().minimum(1).maximum(10),
+        );
         assert_eq!(accepted("0", &integer), None);
-        assert_eq!(accepted("10", &integer), Some(acp::ElicitationContentValue::Integer(10)));
-        let number = acp::ElicitationPropertySchema::Number(acp::NumberPropertySchema::new().minimum(0.5));
+        assert_eq!(
+            accepted("10", &integer),
+            Some(acp::ElicitationContentValue::Integer(10))
+        );
+        let number =
+            acp::ElicitationPropertySchema::Number(acp::NumberPropertySchema::new().minimum(0.5));
         assert_eq!(accepted("0.25", &number), None);
-        let text = acp::ElicitationPropertySchema::String(acp::StringPropertySchema::new().min_length(2).max_length(3));
+        let text = acp::ElicitationPropertySchema::String(
+            acp::StringPropertySchema::new().min_length(2).max_length(3),
+        );
         assert_eq!(accepted("a", &text), None);
         assert_eq!(accepted("abcd", &text), None);
-        assert_eq!(accepted("äöü", &text), Some(acp::ElicitationContentValue::String("äöü".to_string())));
+        assert_eq!(
+            accepted("äöü", &text),
+            Some(acp::ElicitationContentValue::String("äöü".to_string()))
+        );
         let multi = acp::ElicitationPropertySchema::Array(
-            acp::MultiSelectPropertySchema::new(vec!["a".to_string(), "b".to_string()]).max_items(1),
+            acp::MultiSelectPropertySchema::new(vec!["a".to_string(), "b".to_string()])
+                .max_items(1),
         );
         assert_eq!(accepted("1,2", &multi), None);
         assert_eq!(
             accepted("2", &multi),
-            Some(acp::ElicitationContentValue::StringArray(vec!["b".to_string()]))
+            Some(acp::ElicitationContentValue::StringArray(vec![
+                "b".to_string()
+            ]))
         );
     }
 
@@ -310,9 +345,22 @@ mod tests {
             .default_value(vec!["b".to_string()]),
         );
         let default = default_value(&multi);
-        assert_eq!(default, Some(acp::ElicitationContentValue::StringArray(vec!["b".to_string()])));
-        assert_eq!(default.map(|value| show(&value, &choices(&multi))), Some("Beta".to_string()));
-        let boolean = acp::ElicitationPropertySchema::Boolean(acp::BooleanPropertySchema::new().default_value(true));
-        assert_eq!(default_value(&boolean).map(|value| show(&value, &[])), Some("y".to_string()));
+        assert_eq!(
+            default,
+            Some(acp::ElicitationContentValue::StringArray(vec![
+                "b".to_string()
+            ]))
+        );
+        assert_eq!(
+            default.map(|value| show(&value, &choices(&multi))),
+            Some("Beta".to_string())
+        );
+        let boolean = acp::ElicitationPropertySchema::Boolean(
+            acp::BooleanPropertySchema::new().default_value(true),
+        );
+        assert_eq!(
+            default_value(&boolean).map(|value| show(&value, &[])),
+            Some("y".to_string())
+        );
     }
 }

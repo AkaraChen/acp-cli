@@ -98,11 +98,19 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
         // accept and drop the write.
         ClientRequest::ConfigValueWrite { request_id, .. } => {
             let response = config_write_response(bridge);
-            bridge.respond(conn, request_id, ClientResponsePayload::ConfigValueWrite(response));
+            bridge.respond(
+                conn,
+                request_id,
+                ClientResponsePayload::ConfigValueWrite(response),
+            );
         }
         ClientRequest::ConfigBatchWrite { request_id, .. } => {
             let response = config_write_response(bridge);
-            bridge.respond(conn, request_id, ClientResponsePayload::ConfigBatchWrite(response));
+            bridge.respond(
+                conn,
+                request_id,
+                ClientResponsePayload::ConfigBatchWrite(response),
+            );
         }
         ClientRequest::CollaborationModeList { request_id, .. } => {
             bridge.respond(
@@ -181,7 +189,12 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
             if params.ephemeral == Some(true) {
                 // Codex starts hidden side threads (e.g. title generation);
                 // they would become real agent sessions.
-                bridge.respond_error(conn, request_id, INVALID_REQUEST, "ephemeral threads are not supported");
+                bridge.respond_error(
+                    conn,
+                    request_id,
+                    INVALID_REQUEST,
+                    "ephemeral threads are not supported",
+                );
                 return;
             }
             let agent = params
@@ -196,8 +209,17 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
         // A new session on the current agent that starts from the source's
         // conversation (`/agent` → "Bring this conversation").
         ClientRequest::ThreadFork { request_id, params } => {
-            let Some(cwd) = bridge.threads.get(&params.thread_id).map(|thread| thread.cwd.clone()) else {
-                bridge.respond_error(conn, request_id, INVALID_REQUEST, format!("unknown thread {}", params.thread_id));
+            let Some(cwd) = bridge
+                .threads
+                .get(&params.thread_id)
+                .map(|thread| thread.cwd.clone())
+            else {
+                bridge.respond_error(
+                    conn,
+                    request_id,
+                    INVALID_REQUEST,
+                    format!("unknown thread {}", params.thread_id),
+                );
                 return;
             };
             let agent = bridge.agents.current.clone();
@@ -207,7 +229,13 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
             history::resume(bridge, conn, request_id, params.thread_id);
         }
         ClientRequest::ThreadRead { request_id, params } => {
-            history::read(bridge, conn, request_id, &params.thread_id, params.include_turns);
+            history::read(
+                bridge,
+                conn,
+                request_id,
+                &params.thread_id,
+                params.include_turns,
+            );
         }
         ClientRequest::ThreadList { request_id, params } => {
             history::list(bridge, conn, request_id, params);
@@ -261,7 +289,14 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
                 model: params.model,
                 effort: params.effort,
             };
-            threads::start_turn(bridge, conn, request_id, &params.thread_id, params.input, settings);
+            threads::start_turn(
+                bridge,
+                conn,
+                request_id,
+                &params.thread_id,
+                params.input,
+                settings,
+            );
         }
         ClientRequest::TurnInterrupt { request_id, params } => {
             match threads::interrupt(bridge, &params.thread_id) {
@@ -317,7 +352,14 @@ pub(crate) fn dispatch(bridge: &mut Bridge, conn: ConnectionId, request: ClientR
                     acp_client::schema::SessionConfigOptionValue::value_id(value)
                 }
             };
-            set_config_option(bridge, conn, request_id, params.thread_id, params.config_id, value);
+            set_config_option(
+                bridge,
+                conn,
+                request_id,
+                params.thread_id,
+                params.config_id,
+                value,
+            );
         }
         ClientRequest::AcpcModeSet { request_id, params } => {
             set_mode(bridge, conn, request_id, params.thread_id, params.mode_id);
@@ -359,7 +401,11 @@ fn model_list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId) {
         .filter(|thread| thread.loaded)
         .max_by_key(|thread| thread.updated_at);
     let data = match thread {
-        Some(thread) => models::catalog(&thread.config_options, &thread.agent_name, thread.image_input),
+        Some(thread) => models::catalog(
+            &thread.config_options,
+            &thread.agent_name,
+            thread.image_input,
+        ),
         None => models::catalog(&[], &name, false),
     };
     bridge.respond(
@@ -380,7 +426,12 @@ fn settings_update(
     settings: TurnSettings,
 ) {
     let Some(thread) = bridge.threads.get(&thread_id) else {
-        bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {thread_id}"));
+        bridge.respond_error(
+            conn,
+            id,
+            INVALID_REQUEST,
+            format!("unknown thread {thread_id}"),
+        );
         return;
     };
     let options = thread.config_options.clone();
@@ -418,7 +469,12 @@ fn set_config_option(
     value: acp_client::schema::SessionConfigOptionValue,
 ) {
     let Some(thread) = bridge.threads.get(&thread_id) else {
-        bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {thread_id}"));
+        bridge.respond_error(
+            conn,
+            id,
+            INVALID_REQUEST,
+            format!("unknown thread {thread_id}"),
+        );
         return;
     };
     let (Some(session_id), Some(connection)) = (
@@ -454,9 +510,20 @@ fn set_config_option(
     });
 }
 
-fn set_mode(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, thread_id: String, mode_id: String) {
+fn set_mode(
+    bridge: &mut Bridge,
+    conn: ConnectionId,
+    id: RequestId,
+    thread_id: String,
+    mode_id: String,
+) {
     let Some(thread) = bridge.threads.get(&thread_id) else {
-        bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {thread_id}"));
+        bridge.respond_error(
+            conn,
+            id,
+            INVALID_REQUEST,
+            format!("unknown thread {thread_id}"),
+        );
         return;
     };
     let (Some(session_id), Some(connection)) = (
@@ -552,7 +619,11 @@ fn logout(bridge: &mut Bridge, conn: ConnectionId, id: RequestId) {
     bridge.spawn(async move {
         let result = connection.logout().await;
         Box::new(move |bridge: &mut Bridge| match result {
-            Ok(()) => bridge.respond(conn, id, codex_app_server_protocol::LogoutAccountResponse {}),
+            Ok(()) => bridge.respond(
+                conn,
+                id,
+                codex_app_server_protocol::LogoutAccountResponse {},
+            ),
             Err(err) => bridge.respond_error(conn, id, INTERNAL_ERROR, err.message),
         })
     });

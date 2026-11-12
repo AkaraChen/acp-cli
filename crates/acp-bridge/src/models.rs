@@ -25,13 +25,16 @@ pub(crate) fn option_by_category<'a>(
     })
 }
 
-pub(crate) fn select_values(option: &acp::SessionConfigOption) -> Vec<&acp::SessionConfigSelectOption> {
+pub(crate) fn select_values(
+    option: &acp::SessionConfigOption,
+) -> Vec<&acp::SessionConfigSelectOption> {
     match &option.kind {
         acp::SessionConfigKind::Select(select) => match &select.options {
             acp::SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
-            acp::SessionConfigSelectOptions::Grouped(groups) => {
-                groups.iter().flat_map(|group| group.options.iter()).collect()
-            }
+            acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                .iter()
+                .flat_map(|group| group.options.iter())
+                .collect(),
             _ => Vec::new(),
         },
         _ => Vec::new(),
@@ -93,7 +96,10 @@ fn efforts(options: &[acp::SessionConfigOption]) -> Vec<(ReasoningEffort, String
                 .map(|value| {
                     (
                         effort_from_value(&value.value.to_string()),
-                        value.description.clone().unwrap_or_else(|| value.name.clone()),
+                        value
+                            .description
+                            .clone()
+                            .unwrap_or_else(|| value.name.clone()),
                     )
                 })
                 .collect()
@@ -157,14 +163,21 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn select(id: &str, category: acp::SessionConfigOptionCategory, values: &[&str], current: &str) -> acp::SessionConfigOption {
+    fn select(
+        id: &str,
+        category: acp::SessionConfigOptionCategory,
+        values: &[&str],
+        current: &str,
+    ) -> acp::SessionConfigOption {
         acp::SessionConfigOption::select(
             id.to_string(),
             id.to_string(),
             current.to_string(),
             values
                 .iter()
-                .map(|value| acp::SessionConfigSelectOption::new(value.to_string(), value.to_uppercase()))
+                .map(|value| {
+                    acp::SessionConfigSelectOption::new(value.to_string(), value.to_uppercase())
+                })
                 .collect::<Vec<_>>(),
         )
         .category(category)
@@ -173,12 +186,25 @@ mod tests {
     #[test]
     fn catalog_lists_agent_models_with_efforts() {
         let options = vec![
-            select("model", acp::SessionConfigOptionCategory::Model, &["sonnet", "opus"], "opus"),
-            select("effort", acp::SessionConfigOptionCategory::ThoughtLevel, &["low", "high", "ultra"], "high"),
+            select(
+                "model",
+                acp::SessionConfigOptionCategory::Model,
+                &["sonnet", "opus"],
+                "opus",
+            ),
+            select(
+                "effort",
+                acp::SessionConfigOptionCategory::ThoughtLevel,
+                &["low", "high", "ultra"],
+                "high",
+            ),
         ];
         let models = catalog(&options, "Claude", false);
         assert_eq!(
-            models.iter().map(|m| (m.id.clone(), m.is_default)).collect::<Vec<_>>(),
+            models
+                .iter()
+                .map(|m| (m.id.clone(), m.is_default))
+                .collect::<Vec<_>>(),
             vec![("sonnet".to_string(), false), ("opus".to_string(), true)]
         );
         assert_eq!(

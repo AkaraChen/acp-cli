@@ -95,7 +95,10 @@ pub(crate) fn thread(state: &ThreadState, include_turns: bool) -> Thread {
         environments: None,
         extra: None,
         session_id: state.id.clone(),
-        forked_from_id: state.forked_from.as_ref().map(crate::handoff::Parent::thread_id),
+        forked_from_id: state
+            .forked_from
+            .as_ref()
+            .map(crate::handoff::Parent::thread_id),
         parent_thread_id: None,
         preview: state.preview.clone(),
         ephemeral: false,
@@ -305,6 +308,8 @@ pub(crate) fn model(entry: ModelEntry<'_>) -> Model {
     }
 }
 
-pub(crate) fn absolute(path: &std::path::Path) -> Option<codex_utils_absolute_path::AbsolutePathBuf> {
+pub(crate) fn absolute(
+    path: &std::path::Path,
+) -> Option<codex_utils_absolute_path::AbsolutePathBuf> {
     codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path).ok()
 }

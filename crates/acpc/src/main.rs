@@ -151,7 +151,12 @@ fn main() -> anyhow::Result<()> {
     std::process::exit(code);
 }
 
-fn add_agent(command: Vec<String>, slug: Option<String>, name: Option<String>, default: bool) -> anyhow::Result<()> {
+fn add_agent(
+    command: Vec<String>,
+    slug: Option<String>,
+    name: Option<String>,
+    default: bool,
+) -> anyhow::Result<()> {
     let path = home::config_path();
     let request = add::AddAgent {
         command,
@@ -179,8 +184,9 @@ fn init_logging(home: &Home) -> anyhow::Result<()> {
         .append(true)
         .open(&path)
         .with_context(|| format!("opening {}", path.display()))?;
-    let filter = tracing_subscriber::EnvFilter::try_from_env("ACPC_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,acp_bridge=info,acp_client=info,acpc=info"));
+    let filter = tracing_subscriber::EnvFilter::try_from_env("ACPC_LOG").unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("warn,acp_bridge=info,acp_client=info,acpc=info")
+    });
     // The TUI tries to install its own subscriber afterwards; ours wins and
     // its attempt is ignored (it uses `try_init`).
     let _ = tracing_subscriber::fmt()
@@ -203,7 +209,9 @@ fn client_options(terminal_auth: bool) -> ClientOptions {
 async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> anyhow::Result<i32> {
     let agent = config.select_agent(cli.agent.as_deref())?;
     let cwd = match &cli.cwd {
-        Some(dir) => std::fs::canonicalize(dir).with_context(|| format!("--cd {}", dir.display()))?,
+        Some(dir) => {
+            std::fs::canonicalize(dir).with_context(|| format!("--cd {}", dir.display()))?
+        }
         None => std::env::current_dir()?,
     };
     let default_cwd = AbsolutePathBuf::from_absolute_path(&cwd)?;
@@ -276,7 +284,9 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
         tui_cli,
         arg0,
         codex_config::LoaderOverrides::default(),
-        Some(RemoteAppServerEndpoint::UnixSocket { socket_path: socket }),
+        Some(RemoteAppServerEndpoint::UnixSocket {
+            socket_path: socket,
+        }),
     )
     .await;
 
@@ -327,8 +337,9 @@ async fn connect_initial_agent(
         .find(|profile| profile.slug == slug)
         .context("selected agent is not configured")?;
     eprintln!("Starting {}…", profile.name);
-    let request = acp_client::schema::NewSessionRequest::new(options.default_cwd.as_path().to_path_buf())
-        .mcp_servers(options.mcp_servers.clone());
+    let request =
+        acp_client::schema::NewSessionRequest::new(options.default_cwd.as_path().to_path_buf())
+            .mcp_servers(options.mcp_servers.clone());
     let connected = auth::connect_with_auth(
         profile,
         &options.client,

@@ -13,10 +13,10 @@ use acp_client::AgentConnection;
 use acp_client::TerminalAuthCommand;
 use acp_client::schema as acp;
 use codex_app_server_protocol::AcpcAgentSelectResponse;
-use codex_app_server_protocol::AcpcNoticeNotification;
 use codex_app_server_protocol::AcpcAuthMethod;
 use codex_app_server_protocol::AcpcAuthSelectParams;
 use codex_app_server_protocol::AcpcAuthSelectResponse;
+use codex_app_server_protocol::AcpcNoticeNotification;
 use codex_app_server_protocol::AcpcTerminalRunParams;
 use codex_app_server_protocol::AcpcTerminalRunResponse;
 use codex_app_server_protocol::RequestId;
@@ -129,7 +129,11 @@ fn auth_methods(connection: &AgentConnection) -> Vec<AcpcAuthMethod> {
 /// when they call their model): offer the same sign-in, then tell the user
 /// to send again.
 pub(crate) fn sign_in_after_prompt(bridge: &mut Bridge, thread_id: &str) {
-    let Some(slug) = bridge.threads.get(thread_id).map(|thread| thread.agent.clone()) else {
+    let Some(slug) = bridge
+        .threads
+        .get(thread_id)
+        .map(|thread| thread.agent.clone())
+    else {
         return;
     };
     let Some(connection) = bridge.agents.connection(&slug) else {
@@ -138,7 +142,10 @@ pub(crate) fn sign_in_after_prompt(bridge: &mut Bridge, thread_id: &str) {
     let thread_id = thread_id.to_string();
     let done: SignedIn = Box::new(move |bridge, result| {
         // Terminal sign-in restarts the agent, which unloads the thread.
-        let loaded = bridge.threads.get(&thread_id).is_some_and(|thread| thread.loaded);
+        let loaded = bridge
+            .threads
+            .get(&thread_id)
+            .is_some_and(|thread| thread.loaded);
         let (severity, title) = match result {
             Ok(()) if loaded => ("info", "Signed in. Send your message again.".to_string()),
             Ok(()) => (
@@ -174,7 +181,10 @@ fn sign_in(bridge: &mut Bridge, slug: String, connection: Arc<AgentConnection>, 
         );
         return;
     }
-    let params = AcpcAuthSelectParams { agent_name, methods };
+    let params = AcpcAuthSelectParams {
+        agent_name,
+        methods,
+    };
     bridge.request(
         None,
         |request_id| ServerRequest::AcpcAuthSelect { request_id, params },
@@ -198,7 +208,10 @@ fn sign_in(bridge: &mut Bridge, slug: String, connection: Arc<AgentConnection>, 
                     bridge.spawn(async move {
                         let result = connection.authenticate(agent.id.clone()).await;
                         move |bridge: &mut Bridge| {
-                            done(bridge, result.map_err(|err| format!("sign-in failed: {}", err.message)));
+                            done(
+                                bridge,
+                                result.map_err(|err| format!("sign-in failed: {}", err.message)),
+                            );
                         }
                     });
                 }
@@ -221,9 +234,17 @@ fn auth_method_id(method: &acp::AuthMethod) -> Option<&str> {
 
 /// Terminal sign-in: the client runs the agent's command with the method's
 /// args and env interactively, then reconnects and re-initializes.
-fn terminal_sign_in(bridge: &mut Bridge, slug: String, method: &acp::AuthMethodTerminal, done: SignedIn) {
+fn terminal_sign_in(
+    bridge: &mut Bridge,
+    slug: String,
+    method: &acp::AuthMethodTerminal,
+    done: SignedIn,
+) {
     if !bridge.options.client.terminal_auth {
-        done(bridge, Err("terminal sign-in is not available in this client".to_string()));
+        done(
+            bridge,
+            Err("terminal sign-in is not available in this client".to_string()),
+        );
         return;
     }
     let Some(profile) = bridge.agents.profile(&slug).cloned() else {
@@ -240,7 +261,11 @@ fn terminal_sign_in(bridge: &mut Bridge, slug: String, method: &acp::AuthMethodT
     for (name, value) in &auth.command.env {
         env.insert(name.clone(), Some(value.clone()));
     }
-    let title = format!("Sign in to {}: {}", profile.name, printable(&auth.method_name));
+    let title = format!(
+        "Sign in to {}: {}",
+        profile.name,
+        printable(&auth.method_name)
+    );
     // authentication.mdx: confirm risky environment overrides first.
     let confirm = (!auth.sensitive_env.is_empty()).then(|| {
         let overrides: Vec<String> = auth

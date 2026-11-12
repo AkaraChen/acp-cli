@@ -57,7 +57,9 @@ pub enum AgentEvent {
     ElicitationCompleted(acp::CompleteElicitationNotification),
     /// A pending request was answered without the user: the agent sent
     /// `$/cancel_request`, or the turn it belonged to was cancelled.
-    PendingRequestResolved { id: PendingRequestId },
+    PendingRequestResolved {
+        id: PendingRequestId,
+    },
     PromptFinished {
         session_id: acp::SessionId,
         prompt_id: PromptId,
@@ -69,7 +71,10 @@ pub enum AgentEvent {
         result: Result<acp::LoadSessionResponse, AcpError>,
     },
     /// The connection ended. No further events follow.
-    Exited { reason: String, stderr: String },
+    Exited {
+        reason: String,
+        stderr: String,
+    },
 }
 
 enum Pending {
@@ -99,11 +104,9 @@ impl Pending {
             Pending::Permission { responder, .. } => responder.respond(
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled),
             ),
-            Pending::Elicitation { responder, .. } => {
-                responder.respond(acp::CreateElicitationResponse::new(
-                    acp::ElicitationAction::Cancel,
-                ))
-            }
+            Pending::Elicitation { responder, .. } => responder.respond(
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+            ),
         };
         if let Err(err) = result {
             tracing::debug!("failed to answer abandoned agent request: {err:?}");
@@ -299,7 +302,8 @@ impl AgentConnection {
         let request = acp::InitializeRequest::new(ProtocolVersion::V1)
             .client_capabilities(options.client_capabilities())
             .client_info(options.client_info());
-        let answer = tokio::time::timeout(INITIALIZE_TIMEOUT, cx.send_request(request).block_task());
+        let answer =
+            tokio::time::timeout(INITIALIZE_TIMEOUT, cx.send_request(request).block_task());
         let init = match answer.await {
             Err(_) => {
                 process.terminate(Duration::from_secs(2)).await;
@@ -509,8 +513,7 @@ impl AgentConnection {
             .collect();
         for (id, pending) in abandoned {
             pending.resolve_cancelled();
-            self.shared
-                .emit(AgentEvent::PendingRequestResolved { id });
+            self.shared.emit(AgentEvent::PendingRequestResolved { id });
         }
         Ok(())
     }

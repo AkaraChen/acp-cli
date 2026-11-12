@@ -160,7 +160,9 @@ pub async fn serve(
     initial_agent: Option<ConnectedAgent>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    start(options, transport, initial_agent, shutdown).await?.await?;
+    start(options, transport, initial_agent, shutdown)
+        .await?
+        .await?;
     Ok(())
 }
 
@@ -289,7 +291,9 @@ impl Bridge {
             }
             TransportEvent::ConnectionClosed { connection_id } => {
                 self.connections.remove(&connection_id);
-                self.in_flight.borrow_mut().retain(|(conn, _)| *conn != connection_id);
+                self.in_flight
+                    .borrow_mut()
+                    .retain(|(conn, _)| *conn != connection_id);
             }
             TransportEvent::IncomingMessage {
                 connection_id,
@@ -419,12 +423,16 @@ impl Bridge {
         if self.draining {
             // Nobody can answer; resolve it once the caller has recorded it.
             let id = id.clone();
-            let _ = self.tx.send(Input::Apply(Box::new(move |bridge: &mut Bridge| {
-                bridge.on_server_request_result(id, Err(client_gone()));
-            })));
+            let _ = self
+                .tx
+                .send(Input::Apply(Box::new(move |bridge: &mut Bridge| {
+                    bridge.on_server_request_result(id, Err(client_gone()));
+                })));
         } else {
             for connection in self.connections.values().filter(|c| c.initialized) {
-                let _ = connection.out.send(OutgoingMessage::Request(request.clone()));
+                let _ = connection
+                    .out
+                    .send(OutgoingMessage::Request(request.clone()));
             }
         }
         self.server_requests.insert(

@@ -124,11 +124,23 @@ pub(crate) enum Choice {
 
 /// The ACP option for a choice, falling back to the closest available kind
 /// (allow_once ↔ allow_always, reject_once ↔ reject_always).
-pub(crate) fn option_for(options: &[acp::PermissionOption], choice: &Choice) -> Option<acp::PermissionOptionId> {
+pub(crate) fn option_for(
+    options: &[acp::PermissionOption],
+    choice: &Choice,
+) -> Option<acp::PermissionOptionId> {
     let order: &[acp::PermissionOptionKind] = match choice {
-        Choice::AllowOnce => &[acp::PermissionOptionKind::AllowOnce, acp::PermissionOptionKind::AllowAlways],
-        Choice::AllowAlways => &[acp::PermissionOptionKind::AllowAlways, acp::PermissionOptionKind::AllowOnce],
-        Choice::RejectOnce => &[acp::PermissionOptionKind::RejectOnce, acp::PermissionOptionKind::RejectAlways],
+        Choice::AllowOnce => &[
+            acp::PermissionOptionKind::AllowOnce,
+            acp::PermissionOptionKind::AllowAlways,
+        ],
+        Choice::AllowAlways => &[
+            acp::PermissionOptionKind::AllowAlways,
+            acp::PermissionOptionKind::AllowOnce,
+        ],
+        Choice::RejectOnce => &[
+            acp::PermissionOptionKind::RejectOnce,
+            acp::PermissionOptionKind::RejectAlways,
+        ],
         Choice::Option(option_id) => {
             return options
                 .iter()
@@ -174,8 +186,11 @@ fn command_decisions(options: &[acp::PermissionOption]) -> Vec<CommandExecutionA
 /// Whether Codex's fixed file-change choices (yes / yes, don't ask again /
 /// no) say exactly what the agent offers: one option of each kind.
 fn fits_file_change_overlay(options: &[acp::PermissionOption]) -> bool {
-    let count = |kind: acp::PermissionOptionKind| options.iter().filter(|option| option.kind == kind).count();
-    let rejects = count(acp::PermissionOptionKind::RejectOnce) + count(acp::PermissionOptionKind::RejectAlways);
+    let count = |kind: acp::PermissionOptionKind| {
+        options.iter().filter(|option| option.kind == kind).count()
+    };
+    let rejects = count(acp::PermissionOptionKind::RejectOnce)
+        + count(acp::PermissionOptionKind::RejectAlways);
     count(acp::PermissionOptionKind::AllowOnce) == 1
         && count(acp::PermissionOptionKind::AllowAlways) == 1
         && rejects == 1
@@ -254,7 +269,9 @@ pub(crate) fn on_permission(
                 Box::new(move |bridge, result| {
                     let choice = result
                         .ok()
-                        .and_then(|value| serde_json::from_value::<FileChangeRequestApprovalResponse>(value).ok())
+                        .and_then(|value| {
+                            serde_json::from_value::<FileChangeRequestApprovalResponse>(value).ok()
+                        })
                         .map_or(Choice::Cancel, |response| match response.decision {
                             FileChangeApprovalDecision::Accept => Choice::AllowOnce,
                             FileChangeApprovalDecision::AcceptForSession => Choice::AllowAlways,
@@ -288,7 +305,9 @@ pub(crate) fn on_permission(
                 reason: (title != command).then_some(title),
                 network_approval_context: None,
                 command: Some(command),
-                cwd: Some(codex_utils_path_uri::LegacyAppPathString::from_abs_path(&cwd)),
+                cwd: Some(codex_utils_path_uri::LegacyAppPathString::from_abs_path(
+                    &cwd,
+                )),
                 command_actions: None,
                 additional_permissions: None,
                 proposed_execpolicy_amendment: None,
@@ -302,15 +321,20 @@ pub(crate) fn on_permission(
                     let choice = result
                         .ok()
                         .and_then(|value| {
-                            serde_json::from_value::<CommandExecutionRequestApprovalResponse>(value).ok()
+                            serde_json::from_value::<CommandExecutionRequestApprovalResponse>(value)
+                                .ok()
                         })
                         .map_or(Choice::Cancel, |response| match response.decision {
                             CommandExecutionApprovalDecision::Accept
-                            | CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment { .. }
-                            | CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment { .. } => {
-                                Choice::AllowOnce
+                            | CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment {
+                                ..
                             }
-                            CommandExecutionApprovalDecision::AcceptForSession => Choice::AllowAlways,
+                            | CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
+                                ..
+                            } => Choice::AllowOnce,
+                            CommandExecutionApprovalDecision::AcceptForSession => {
+                                Choice::AllowAlways
+                            }
                             CommandExecutionApprovalDecision::Decline => Choice::RejectOnce,
                             CommandExecutionApprovalDecision::Cancel => Choice::Cancel,
                             CommandExecutionApprovalDecision::AcpcOption { option } => {
@@ -369,9 +393,10 @@ pub(crate) fn on_pending_resolved(bridge: &mut Bridge, agent: &str, id: PendingR
     let Some(connection) = bridge.agents.connection(agent) else {
         return;
     };
-    if let Some(request) = bridge
-        .agent_requests
-        .remove(&AgentRequestKey::new(agent, &connection, id))
+    if let Some(request) =
+        bridge
+            .agent_requests
+            .remove(&AgentRequestKey::new(agent, &connection, id))
     {
         bridge.resolve_server_request(&request.request_id);
     }
@@ -482,17 +507,21 @@ pub(crate) fn on_elicitation(
             bridge.agent_requests.remove(&owner);
             let action = result
                 .ok()
-                .and_then(|value| serde_json::from_value::<McpServerElicitationRequestResponse>(value).ok())
-                .map_or(acp::ElicitationAction::Cancel, |response| match response.action {
-                    McpServerElicitationAction::Accept => {
-                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new().content(
-                            response
-                                .content
-                                .and_then(|content| serde_json::from_value(content).ok()),
-                        ))
+                .and_then(|value| {
+                    serde_json::from_value::<McpServerElicitationRequestResponse>(value).ok()
+                })
+                .map_or(acp::ElicitationAction::Cancel, |response| {
+                    match response.action {
+                        McpServerElicitationAction::Accept => acp::ElicitationAction::Accept(
+                            acp::ElicitationAcceptAction::new().content(
+                                response
+                                    .content
+                                    .and_then(|content| serde_json::from_value(content).ok()),
+                            ),
+                        ),
+                        McpServerElicitationAction::Decline => acp::ElicitationAction::Decline,
+                        McpServerElicitationAction::Cancel => acp::ElicitationAction::Cancel,
                     }
-                    McpServerElicitationAction::Decline => acp::ElicitationAction::Decline,
-                    McpServerElicitationAction::Cancel => acp::ElicitationAction::Cancel,
                 });
             // Only the connection that asked; a dead one has nobody left.
             if let Some(connection) = issuing.upgrade() {
@@ -524,7 +553,10 @@ fn mcp_schema(
     let object = value.as_object_mut()?;
     let mut message = message.to_string();
     for key in ["title", "description"] {
-        if let Some(text) = object.remove(key).as_ref().and_then(serde_json::Value::as_str)
+        if let Some(text) = object
+            .remove(key)
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
             && !text.is_empty()
             && !message.contains(text)
         {
@@ -552,7 +584,10 @@ fn strip_property(property: &mut serde_json::Value) {
     object.remove("_meta");
     object.remove("pattern");
     for key in ["oneOf", "anyOf"] {
-        if let Some(options) = object.get_mut(key).and_then(serde_json::Value::as_array_mut) {
+        if let Some(options) = object
+            .get_mut(key)
+            .and_then(serde_json::Value::as_array_mut)
+        {
             for option in options {
                 if let Some(option) = option.as_object_mut() {
                     option.remove("description");
@@ -589,15 +624,30 @@ mod tests {
             option("yes", acp::PermissionOptionKind::AllowOnce),
             option("no-forever", acp::PermissionOptionKind::RejectAlways),
         ];
-        assert_eq!(option_for(&options, &Choice::AllowAlways).map(|o| o.to_string()), Some("yes".into()));
-        assert_eq!(option_for(&options, &Choice::RejectOnce).map(|o| o.to_string()), Some("no-forever".into()));
-        assert_eq!(option_for(&options, &Choice::Cancel), None);
         assert_eq!(
-            option_for(&options, &Choice::Option(acp::PermissionOptionId::new("no-forever")))
-                .map(|o| o.to_string()),
+            option_for(&options, &Choice::AllowAlways).map(|o| o.to_string()),
+            Some("yes".into())
+        );
+        assert_eq!(
+            option_for(&options, &Choice::RejectOnce).map(|o| o.to_string()),
             Some("no-forever".into())
         );
-        assert_eq!(option_for(&options, &Choice::Option(acp::PermissionOptionId::new("gone"))), None);
+        assert_eq!(option_for(&options, &Choice::Cancel), None);
+        assert_eq!(
+            option_for(
+                &options,
+                &Choice::Option(acp::PermissionOptionId::new("no-forever"))
+            )
+            .map(|o| o.to_string()),
+            Some("no-forever".into())
+        );
+        assert_eq!(
+            option_for(
+                &options,
+                &Choice::Option(acp::PermissionOptionId::new("gone"))
+            ),
+            None
+        );
     }
 
     #[test]

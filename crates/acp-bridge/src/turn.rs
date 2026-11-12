@@ -108,13 +108,15 @@ impl TurnBuilder {
     fn completed(&mut self, index: usize, emit: &mut Emit) {
         let now = records::now_ms();
         self.items[index].completed_at_ms = Some(now);
-        emit.push(ServerNotification::ItemCompleted(ItemCompletedNotification {
-            item: self.items[index].clone(),
-            thread_id: self.thread_id.clone(),
-            turn_id: self.id.clone(),
-            content_token_count: None,
-            completed_at_ms: now,
-        }));
+        emit.push(ServerNotification::ItemCompleted(
+            ItemCompletedNotification {
+                item: self.items[index].clone(),
+                thread_id: self.thread_id.clone(),
+                turn_id: self.id.clone(),
+                content_token_count: None,
+                completed_at_ms: now,
+            },
+        ));
     }
 
     /// A user prompt replayed by `session/load`.
@@ -130,13 +132,9 @@ impl TurnBuilder {
         }) = self.items.last_mut()
         {
             match (content.last_mut(), &input) {
-                (
-                    Some(UserInput::Text { text, .. }),
-                    UserInput::Text {
-                        text: more,
-                        ..
-                    },
-                ) => text.push_str(more),
+                (Some(UserInput::Text { text, .. }), UserInput::Text { text: more, .. }) => {
+                    text.push_str(more)
+                }
                 _ => content.push(input),
             }
             return;
@@ -174,7 +172,9 @@ impl TurnBuilder {
         let message_id = chunk.message_id.as_ref().map(ToString::to_string);
         let continues = self.open_text.as_ref().is_some_and(|open| {
             open.kind == kind
-                && (message_id.is_none() || open.message_id.is_none() || open.message_id == message_id)
+                && (message_id.is_none()
+                    || open.message_id.is_none()
+                    || open.message_id == message_id)
         });
         if !continues {
             self.close_text(emit);
@@ -312,7 +312,9 @@ impl TurnBuilder {
         );
         let changed = match (&self.items[index].payload, &payload) {
             (
-                ThreadItemPayload::FileChange { changes: before, .. },
+                ThreadItemPayload::FileChange {
+                    changes: before, ..
+                },
                 ThreadItemPayload::FileChange { changes: after, .. },
             ) => before != after,
             _ => true,
@@ -493,8 +495,14 @@ impl TurnBuilder {
         let duration = records::now_ms().saturating_sub(entry.started_at_ms);
         let index = entry.index;
         let item_id = item_id(&self.items[index].payload).to_string();
-        self.items[index].payload =
-            tool_calls::payload(&item_id, entry.kind, &entry.call, outcome, &self.cwd, Some(duration));
+        self.items[index].payload = tool_calls::payload(
+            &item_id,
+            entry.kind,
+            &entry.call,
+            outcome,
+            &self.cwd,
+            Some(duration),
+        );
         self.completed(index, emit);
     }
 
@@ -514,23 +522,25 @@ impl TurnBuilder {
     }
 
     pub(crate) fn plan(&self, plan: &acp::Plan, emit: &mut Emit) {
-        emit.push(ServerNotification::TurnPlanUpdated(TurnPlanUpdatedNotification {
-            thread_id: self.thread_id.clone(),
-            turn_id: self.id.clone(),
-            explanation: None,
-            plan: plan
-                .entries
-                .iter()
-                .map(|entry| TurnPlanStep {
-                    step: entry.content.clone(),
-                    status: match entry.status {
-                        acp::PlanEntryStatus::Completed => TurnPlanStepStatus::Completed,
-                        acp::PlanEntryStatus::InProgress => TurnPlanStepStatus::InProgress,
-                        _ => TurnPlanStepStatus::Pending,
-                    },
-                })
-                .collect(),
-        }));
+        emit.push(ServerNotification::TurnPlanUpdated(
+            TurnPlanUpdatedNotification {
+                thread_id: self.thread_id.clone(),
+                turn_id: self.id.clone(),
+                explanation: None,
+                plan: plan
+                    .entries
+                    .iter()
+                    .map(|entry| TurnPlanStep {
+                        step: entry.content.clone(),
+                        status: match entry.status {
+                            acp::PlanEntryStatus::Completed => TurnPlanStepStatus::Completed,
+                            acp::PlanEntryStatus::InProgress => TurnPlanStepStatus::InProgress,
+                            _ => TurnPlanStepStatus::Pending,
+                        },
+                    })
+                    .collect(),
+            },
+        ));
     }
 
     /// A context compaction reported by the agent (`compaction_update`).
@@ -585,7 +595,14 @@ impl TurnBuilder {
                 _ => {}
             }
         }
-        records::turn(&self.id, items, TurnStatus::InProgress, None, Some(self.started_at_ms), None)
+        records::turn(
+            &self.id,
+            items,
+            TurnStatus::InProgress,
+            None,
+            Some(self.started_at_ms),
+            None,
+        )
     }
 
     /// Close every open item and produce the finished turn.

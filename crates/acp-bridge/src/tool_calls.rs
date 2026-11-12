@@ -17,10 +17,10 @@ use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::DynamicToolCallOutputContentItem;
 use codex_app_server_protocol::DynamicToolCallStatus;
 use codex_app_server_protocol::FileUpdateChange;
-use codex_utils_path_uri::LegacyAppPathString;
 use codex_app_server_protocol::PatchApplyStatus;
 use codex_app_server_protocol::PatchChangeKind;
 use codex_app_server_protocol::ThreadItemPayload;
+use codex_utils_path_uri::LegacyAppPathString;
 
 use crate::content::display_text;
 
@@ -146,8 +146,10 @@ pub(crate) fn output_text(call: &acp::ToolCall) -> String {
 }
 
 fn command_line(call: &acp::ToolCall) -> String {
-    let from_input = call.raw_input.as_ref().and_then(|input| {
-        match input.get("command") {
+    let from_input = call
+        .raw_input
+        .as_ref()
+        .and_then(|input| match input.get("command") {
             Some(serde_json::Value::String(command)) => Some(command.clone()),
             Some(serde_json::Value::Array(parts)) => Some(
                 parts
@@ -157,8 +159,7 @@ fn command_line(call: &acp::ToolCall) -> String {
                     .join(" "),
             ),
             _ => None,
-        }
-    });
+        });
     from_input.unwrap_or_else(|| call.title.clone())
 }
 
@@ -348,7 +349,11 @@ fn file_changes(call: &acp::ToolCall) -> Vec<FileUpdateChange> {
                     }
                     None => (old_next, new_next),
                 };
-                unified.push_str(&shift_hunks(&fragment_diff(old, new, &path), old_skip, new_skip));
+                unified.push_str(&shift_hunks(
+                    &fragment_diff(old, new, &path),
+                    old_skip,
+                    new_skip,
+                ));
                 let (old_lines, new_lines) = (line_count(old), line_count(new));
                 delta += new_lines - old_lines;
                 old_next = old_skip + old_lines;
@@ -424,7 +429,11 @@ fn shift_hunks(diff: &str, old_skip: i64, new_skip: i64) -> String {
             let shifted = line.strip_prefix("@@ -").and_then(|rest| {
                 let (ranges, tail) = rest.split_once(" @@")?;
                 let (old, new) = ranges.split_once(" +")?;
-                Some(format!("@@ -{} +{} @@{tail}", shift(old, old_skip)?, shift(new, new_skip)?))
+                Some(format!(
+                    "@@ -{} +{} @@{tail}",
+                    shift(old, old_skip)?,
+                    shift(new, new_skip)?
+                ))
             });
             format!("{}\n", shifted.unwrap_or_else(|| line.to_string()))
         })
@@ -464,7 +473,12 @@ impl AirPatch {
 }
 
 fn air_patch(diff: &acp::Diff) -> Option<AirPatch> {
-    let patch = diff.meta.as_ref()?.get("jetbrains")?.get("air")?.get("diffPatch")?;
+    let patch = diff
+        .meta
+        .as_ref()?
+        .get("jetbrains")?
+        .get("air")?
+        .get("diffPatch")?;
     if patch.get("format")?.as_str()? != "git_patch" {
         return None;
     }
@@ -563,9 +577,10 @@ mod tests {
         assert_eq!(classify(&read), ItemKind::Read);
         let read_without_location = acp::ToolCall::new("3", "Read").kind(acp::ToolKind::Read);
         assert_eq!(classify(&read_without_location), ItemKind::Dynamic);
-        let other_with_diff = acp::ToolCall::new("4", "x").content(vec![
-            acp::ToolCallContent::Diff(acp::Diff::new("/a.rs", "new")),
-        ]);
+        let other_with_diff =
+            acp::ToolCall::new("4", "x").content(vec![acp::ToolCallContent::Diff(acp::Diff::new(
+                "/a.rs", "new",
+            ))]);
         assert_eq!(classify(&other_with_diff), ItemKind::FileChange);
         let search = acp::ToolCall::new("5", "grep").kind(acp::ToolKind::Search);
         assert_eq!(classify(&search), ItemKind::Dynamic);
@@ -607,15 +622,14 @@ mod tests {
             PatchChangeKind::Delete => (0, change.diff.lines().count()),
             PatchChangeKind::Update { .. } => {
                 let patch = diffy::Patch::from_str(&change.diff).expect("diffy parses the diff");
-                patch
-                    .hunks()
-                    .iter()
-                    .flat_map(diffy::Hunk::lines)
-                    .fold((0, 0), |(added, removed), line| match line {
+                patch.hunks().iter().flat_map(diffy::Hunk::lines).fold(
+                    (0, 0),
+                    |(added, removed), line| match line {
                         diffy::Line::Insert(_) => (added + 1, removed),
                         diffy::Line::Delete(_) => (added, removed + 1),
                         diffy::Line::Context(_) => (added, removed),
-                    })
+                    },
+                )
             }
         }
     }

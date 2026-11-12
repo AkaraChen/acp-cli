@@ -105,7 +105,11 @@ impl Config {
     }
 
     /// ACP wants stdio MCP commands as absolute paths.
-    fn resolve_mcp_commands(&mut self, dir: &Path, search_path: Option<&OsStr>) -> anyhow::Result<()> {
+    fn resolve_mcp_commands(
+        &mut self,
+        dir: &Path,
+        search_path: Option<&OsStr>,
+    ) -> anyhow::Result<()> {
         for server in &mut self.mcp_servers {
             let Some(command) = &mut server.command else {
                 continue;
@@ -113,7 +117,9 @@ impl Config {
             if command.is_absolute() {
                 continue;
             }
-            let bare = command.parent().is_none_or(|parent| parent.as_os_str().is_empty());
+            let bare = command
+                .parent()
+                .is_none_or(|parent| parent.as_os_str().is_empty());
             let resolved = if bare {
                 find_command(command, search_path).with_context(|| {
                     format!(
@@ -141,8 +147,13 @@ impl Config {
                 bail!("duplicate agent slug `{}`", agent.slug);
             }
             match &agent.model_override {
-                Some(model_override) if model_override.env.is_some() == model_override.arg.is_some() => {
-                    bail!("agent `{}`: model_override needs exactly one of `env` or `arg`", agent.slug);
+                Some(model_override)
+                    if model_override.env.is_some() == model_override.arg.is_some() =>
+                {
+                    bail!(
+                        "agent `{}`: model_override needs exactly one of `env` or `arg`",
+                        agent.slug
+                    );
                 }
                 None if agent.default_model.is_some() => {
                     bail!(
@@ -160,7 +171,9 @@ impl Config {
                     server.name
                 );
             }
-            if server.command.is_some() && (server.transport.is_some() || !server.headers.is_empty()) {
+            if server.command.is_some()
+                && (server.transport.is_some() || !server.headers.is_empty())
+            {
                 bail!(
                     "mcp server `{}`: `transport` and `headers` only apply to `url` servers",
                     server.name
@@ -193,14 +206,21 @@ impl Config {
             None => bail!("several agents are configured; set `agent = \"…\"` or pass --agent"),
         };
         if !self.agents.iter().any(|agent| agent.slug == slug) {
-            let known: Vec<&str> = self.agents.iter().map(|agent| agent.slug.as_str()).collect();
+            let known: Vec<&str> = self
+                .agents
+                .iter()
+                .map(|agent| agent.slug.as_str())
+                .collect();
             bail!("unknown agent `{slug}` (configured: {})", known.join(", "));
         }
         Ok(slug)
     }
 
     pub fn mcp_servers(&self) -> Vec<acp::McpServer> {
-        self.mcp_servers.iter().map(McpServerConfig::to_acp).collect()
+        self.mcp_servers
+            .iter()
+            .map(McpServerConfig::to_acp)
+            .collect()
     }
 }
 
@@ -244,7 +264,9 @@ impl McpServerConfig {
                 .map(|(name, value)| acp::HttpHeader::new(name, value))
                 .collect();
             if self.transport.as_deref() == Some("sse") {
-                return acp::McpServer::Sse(acp::McpServerSse::new(&self.name, url).headers(headers));
+                return acp::McpServer::Sse(
+                    acp::McpServerSse::new(&self.name, url).headers(headers),
+                );
             }
             return acp::McpServer::Http(acp::McpServerHttp::new(&self.name, url).headers(headers));
         }
@@ -264,7 +286,9 @@ impl McpServerConfig {
 /// Where `command` runs from: a bare name is looked up on `search_path`,
 /// anything else is taken as a path.
 pub(crate) fn find_command(command: &Path, search_path: Option<&OsStr>) -> Option<PathBuf> {
-    let bare = command.parent().is_none_or(|parent| parent.as_os_str().is_empty());
+    let bare = command
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty());
     if !bare {
         return is_executable(command).then(|| command.to_path_buf());
     }
@@ -330,7 +354,10 @@ model_override = { env = "B_MODEL" }
         assert_eq!(a.command.args, vec!["acp", "--model", "big"]);
         assert_eq!(a.command.env_remove, vec!["CODEX_HOME".to_string()]);
         let b = config.agents[1].to_profile(&restore);
-        assert_eq!(b.command.env, vec![("B_MODEL".to_string(), "small".to_string())]);
+        assert_eq!(
+            b.command.env,
+            vec![("B_MODEL".to_string(), "small".to_string())]
+        );
         assert_eq!(config.select_agent(None).expect("agent"), "a");
         assert!(config.select_agent(Some("c")).is_err());
     }
@@ -386,8 +413,11 @@ command = "/opt/server"
         config
             .resolve_mcp_commands(Path::new("/etc/acpc"), Some(bin.path().as_os_str()))
             .expect("resolved");
-        let commands: Vec<Option<PathBuf>> =
-            config.mcp_servers.iter().map(|server| server.command.clone()).collect();
+        let commands: Vec<Option<PathBuf>> = config
+            .mcp_servers
+            .iter()
+            .map(|server| server.command.clone())
+            .collect();
         assert_eq!(
             commands,
             vec![
@@ -401,10 +431,17 @@ command = "/opt/server"
         // name the config file and the server.
         let data = "[[mcp_servers]]\nname = \"data\"\ncommand = \"mcp-data\"\n";
         let mut config: Config = toml::from_str(data).expect("config");
-        assert!(config.resolve_mcp_commands(bin.path(), Some(bin.path().as_os_str())).is_err());
+        assert!(
+            config
+                .resolve_mcp_commands(bin.path(), Some(bin.path().as_os_str()))
+                .is_err()
+        );
         let path = bin.path().join("config.toml");
         std::fs::write(&path, data).expect("write config");
         let err = format!("{:#}", Config::load(&path).expect_err("not on PATH"));
-        assert!(err.contains(&path.display().to_string()) && err.contains("`data`"), "{err}");
+        assert!(
+            err.contains(&path.display().to_string()) && err.contains("`data`"),
+            "{err}"
+        );
     }
 }

@@ -113,7 +113,9 @@ fn render(payload: &ThreadItemPayload, agent_name: &str) -> Option<String> {
                 .filter_map(|input| match input {
                     UserInput::Text { text, .. } => Some(text.clone()),
                     UserInput::Mention { path, .. } => Some(format!("@{path}")),
-                    UserInput::LocalImage { path, .. } => Some(format!("[image {}]", path.display())),
+                    UserInput::LocalImage { path, .. } => {
+                        Some(format!("[image {}]", path.display()))
+                    }
                     UserInput::Image { .. } => Some("[image]".to_string()),
                     _ => None,
                 })
@@ -123,7 +125,9 @@ fn render(payload: &ThreadItemPayload, agent_name: &str) -> Option<String> {
         ThreadItemPayload::AgentMessage { text, .. } if !text.is_empty() => {
             Some(format!("{agent_name}: {text}"))
         }
-        ThreadItemPayload::CommandExecution { command, .. } => Some(format!("({agent_name} ran `{command}`)")),
+        ThreadItemPayload::CommandExecution { command, .. } => {
+            Some(format!("({agent_name} ran `{command}`)"))
+        }
         ThreadItemPayload::FileChange { changes, .. } => {
             let paths: Vec<&str> = changes.iter().map(|change| change.path.as_str()).collect();
             Some(format!("({agent_name} edited {})", paths.join(", ")))
@@ -152,8 +156,12 @@ pub(crate) fn block(handoff: &Handoff, embedded_context: bool) -> acp::ContentBl
 pub(crate) fn parent(block: &acp::ContentBlock) -> Option<Parent> {
     match block {
         acp::ContentBlock::Resource(resource) => match &resource.resource {
-            acp::EmbeddedResourceResource::TextResourceContents(text) => Parent::from_uri(&text.uri),
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => Parent::from_uri(&blob.uri),
+            acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                Parent::from_uri(&text.uri)
+            }
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                Parent::from_uri(&blob.uri)
+            }
             _ => None,
         },
         acp::ContentBlock::Text(text) => {
@@ -175,7 +183,10 @@ pub(crate) fn strip(text: &str) -> Option<&str> {
     let Some(rest) = text.strip_prefix(TEXT_OPEN) else {
         return Some(text);
     };
-    let rest = rest.split_once(TEXT_CLOSE).map_or("", |(_, after)| after).trim_start();
+    let rest = rest
+        .split_once(TEXT_CLOSE)
+        .map_or("", |(_, after)| after)
+        .trim_start();
     (!rest.is_empty()).then_some(rest)
 }
 
@@ -203,7 +214,9 @@ mod tests {
         let block = block(&handoff(), true);
         assert!(is_handoff(&block));
         assert_eq!(parent(&block), claude_s1());
-        assert!(!is_handoff(&acp::ContentBlock::Text(acp::TextContent::new("hi"))));
+        assert!(!is_handoff(&acp::ContentBlock::Text(
+            acp::TextContent::new("hi")
+        )));
     }
 
     #[test]
@@ -214,7 +227,10 @@ mod tests {
             panic!("text block expected");
         };
         assert_eq!(strip(&text.text), None);
-        assert_eq!(strip(&format!("{}\n\ncontinue please", text.text)), Some("continue please"));
+        assert_eq!(
+            strip(&format!("{}\n\ncontinue please", text.text)),
+            Some("continue please")
+        );
         assert_eq!(strip("plain"), Some("plain"));
     }
 }

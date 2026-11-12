@@ -72,7 +72,12 @@ fn register_listed(
 const LAST_PAGES: usize = 10;
 
 /// `thread/list` → `session/list` on the current agent.
-pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, params: ThreadListParams) {
+pub(crate) fn list(
+    bridge: &mut Bridge,
+    conn: ConnectionId,
+    id: RequestId,
+    params: ThreadListParams,
+) {
     let agent = bridge.agents.current.clone();
     // `--last` asks for one thread from the start of the list.
     let last = params.limit == Some(1) && params.cursor.is_none();
@@ -126,7 +131,8 @@ pub(crate) fn list(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, param
                             crate::threads::agent_display_name(bridge, &agent, &connection);
                         let mut data = Vec::new();
                         for info in &response.sessions {
-                            let Some(thread_id) = register_listed(bridge, &agent, &agent_name, info)
+                            let Some(thread_id) =
+                                register_listed(bridge, &agent, &agent_name, info)
                             else {
                                 continue;
                             };
@@ -181,10 +187,16 @@ async fn list_pages(
 ) -> Result<acp::ListSessionsResponse, acp_client::AcpError> {
     let mut response = connection.list_sessions(request.clone()).await?;
     for _ in 1..pages {
-        let Some(cursor) = response.next_cursor.take().filter(|cursor| !cursor.is_empty()) else {
+        let Some(cursor) = response
+            .next_cursor
+            .take()
+            .filter(|cursor| !cursor.is_empty())
+        else {
             break;
         };
-        let next = connection.list_sessions(request.clone().cursor(cursor)).await?;
+        let next = connection
+            .list_sessions(request.clone().cursor(cursor))
+            .await?;
         response.sessions.extend(next.sessions);
         response.next_cursor = next.next_cursor;
     }
@@ -274,19 +286,26 @@ pub(crate) fn read(
     locate(
         bridge,
         thread_id.to_string(),
-        Box::new(move |bridge, located| match (located, bridge.threads.get(&key)) {
-            (Ok(()), Some(thread)) => {
-                let response = ThreadReadResponse {
-                    thread: records::thread(thread, include_turns),
-                    read_state: None,
-                };
-                bridge.respond(conn, id, response);
-            }
-            (Err(err), _) => bridge.respond_error(conn, id, INVALID_REQUEST, err),
-            (Ok(()), None) => {
-                bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {key}"));
-            }
-        }),
+        Box::new(
+            move |bridge, located| match (located, bridge.threads.get(&key)) {
+                (Ok(()), Some(thread)) => {
+                    let response = ThreadReadResponse {
+                        thread: records::thread(thread, include_turns),
+                        read_state: None,
+                    };
+                    bridge.respond(conn, id, response);
+                }
+                (Err(err), _) => bridge.respond_error(conn, id, INVALID_REQUEST, err),
+                (Ok(()), None) => {
+                    bridge.respond_error(
+                        conn,
+                        id,
+                        INVALID_REQUEST,
+                        format!("unknown thread {key}"),
+                    );
+                }
+            },
+        ),
     );
 }
 
@@ -307,7 +326,12 @@ pub(crate) fn resume(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, thr
                 return;
             };
             if thread.replay.is_some() {
-                bridge.respond_error(conn, id, INVALID_REQUEST, "this session is already being opened");
+                bridge.respond_error(
+                    conn,
+                    id,
+                    INVALID_REQUEST,
+                    "this session is already being opened",
+                );
                 return;
             }
             if thread.loaded {
@@ -325,7 +349,11 @@ fn respond_loaded(bridge: &Bridge, conn: ConnectionId, id: RequestId, thread_id:
     let Some(thread) = bridge.threads.get(thread_id) else {
         return;
     };
-    bridge.respond(conn, id, records::thread_resume_response(thread, bridge.options.yolo));
+    bridge.respond(
+        conn,
+        id,
+        records::thread_resume_response(thread, bridge.options.yolo),
+    );
     crate::ext::thread_state(bridge, thread);
     // Approvals the client dropped while it was elsewhere.
     bridge.resend_server_requests(conn, thread_id);
@@ -358,7 +386,13 @@ async fn find_session(
     Ok(None)
 }
 
-fn attach(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, agent: String, thread_id: String) {
+fn attach(
+    bridge: &mut Bridge,
+    conn: ConnectionId,
+    id: RequestId,
+    agent: String,
+    thread_id: String,
+) {
     let mcp_servers = bridge.options.mcp_servers.clone();
     crate::agents::with_agent(
         bridge,
@@ -372,13 +406,23 @@ fn attach(bridge: &mut Bridge, conn: ConnectionId, id: RequestId, agent: String,
                 }
             };
             let Some(thread) = bridge.threads.get_mut(&thread_id) else {
-                bridge.respond_error(conn, id, INVALID_REQUEST, format!("unknown thread {thread_id}"));
+                bridge.respond_error(
+                    conn,
+                    id,
+                    INVALID_REQUEST,
+                    format!("unknown thread {thread_id}"),
+                );
                 return;
             };
             // Checked again: another resume may have opened it while the
             // agent was starting.
             if thread.replay.is_some() {
-                bridge.respond_error(conn, id, INVALID_REQUEST, "this session is already being opened");
+                bridge.respond_error(
+                    conn,
+                    id,
+                    INVALID_REQUEST,
+                    "this session is already being opened",
+                );
                 return;
             }
             if thread.loaded {
@@ -438,12 +482,21 @@ fn resume_without_history(
     bridge.spawn(async move {
         let result = connection.resume_session(request).await;
         Box::new(move |bridge: &mut Bridge| {
-            let Some(agent) = bridge.threads.get(&thread_id).map(|thread| thread.agent.clone()) else {
+            let Some(agent) = bridge
+                .threads
+                .get(&thread_id)
+                .map(|thread| thread.agent.clone())
+            else {
                 return;
             };
             // The session died with its process; leave the thread unloaded.
             if result.is_ok() && !bridge.agents.is_live(&agent, &connection) {
-                bridge.respond_error(conn, id, INTERNAL_ERROR, format!("agent `{agent}` exited; try again"));
+                bridge.respond_error(
+                    conn,
+                    id,
+                    INTERNAL_ERROR,
+                    format!("agent `{agent}` exited; try again"),
+                );
                 return;
             }
             let Some(thread) = bridge.threads.get_mut(&thread_id) else {
@@ -491,14 +544,21 @@ pub(crate) fn on_replay_update(thread: &mut ThreadState, update: acp::SessionUpd
     }
     let builder = replay.current.get_or_insert_with(|| {
         let index = replay.turns.len() + 1;
-        TurnBuilder::new(format!("{thread_id}-r{index}"), thread_id.clone(), cwd, records::now_ms())
+        TurnBuilder::new(
+            format!("{thread_id}-r{index}"),
+            thread_id.clone(),
+            cwd,
+            records::now_ms(),
+        )
     });
     match update {
         acp::SessionUpdate::UserMessageChunk(chunk) => builder.user_chunk(&chunk, &mut discard),
         acp::SessionUpdate::AgentMessageChunk(chunk) => builder.agent_message(&chunk, &mut discard),
         acp::SessionUpdate::AgentThoughtChunk(chunk) => builder.agent_thought(&chunk, &mut discard),
         acp::SessionUpdate::ToolCall(call) => builder.tool_call(call, &mut discard),
-        acp::SessionUpdate::ToolCallUpdate(update) => builder.tool_call_update(update, &mut discard),
+        acp::SessionUpdate::ToolCallUpdate(update) => {
+            builder.tool_call_update(update, &mut discard)
+        }
         acp::SessionUpdate::CompactionUpdate(update) => builder.compaction(&update, &mut discard),
         _ => {}
     }
@@ -545,7 +605,10 @@ pub(crate) fn on_load_finished(
             thread.apply_session_setup(response.config_options, response.modes);
             let reply = records::thread_resume_response(thread, bridge.options.yolo);
             let thread_id = thread.id.clone();
-            let lineage = thread.forked_from.clone().map(|parent| (parent, thread.cwd.clone()));
+            let lineage = thread
+                .forked_from
+                .clone()
+                .map(|parent| (parent, thread.cwd.clone()));
             bridge.respond(conn, id, reply);
             if let Some((parent, cwd)) = lineage {
                 register_parent(bridge, &parent, cwd);
@@ -577,15 +640,19 @@ fn register_parent(bridge: &mut Bridge, parent: &crate::handoff::Parent, cwd: Ab
 }
 
 fn first_user_text(thread: &ThreadState) -> Option<String> {
-    thread.turns.iter().flat_map(|turn| turn.items.iter()).find_map(|item| match &item.payload {
-        codex_app_server_protocol::ThreadItemPayload::UserMessage { content, .. } => {
-            content.iter().find_map(|input| match input {
-                codex_app_server_protocol::UserInput::Text { text, .. } => Some(text.clone()),
-                _ => None,
-            })
-        }
-        _ => None,
-    })
+    thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .find_map(|item| match &item.payload {
+            codex_app_server_protocol::ThreadItemPayload::UserMessage { content, .. } => {
+                content.iter().find_map(|input| match input {
+                    codex_app_server_protocol::UserInput::Text { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
 }
 
 pub(crate) fn absolute_cwd(bridge: &Bridge, cwd: Option<&str>) -> AbsolutePathBuf {
@@ -627,7 +694,9 @@ mod tests {
         }
         let mut replay = thread.replay.take().expect("replay");
         let last = replay.current.take().expect("open turn");
-        replay.turns.push(last.finish(TurnStatus::Completed, None, &mut Vec::new()));
+        replay
+            .turns
+            .push(last.finish(TurnStatus::Completed, None, &mut Vec::new()));
         assert_eq!(replay.turns.len(), 2);
         assert_eq!(replay.turns[0].items.len(), 2);
         assert!(matches!(

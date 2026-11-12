@@ -18,7 +18,9 @@ fn item_type(message: &Value) -> &str {
 async fn completed_items(harness: &mut Harness) -> (Vec<Value>, Value) {
     let mut items = Vec::new();
     loop {
-        let item = harness.next_any(&["item/completed", "turn/completed"]).await;
+        let item = harness
+            .next_any(&["item/completed", "turn/completed"])
+            .await;
         if item["method"] == "turn/completed" {
             return (items, item);
         }
@@ -35,13 +37,19 @@ async fn streamed_turn_produces_items_and_completes() {
 
     let methods = harness.methods_until("turn/completed").await;
     assert!(methods.contains(&"turn/started".to_string()), "{methods:?}");
-    assert!(methods.contains(&"item/agentMessage/delta".to_string()), "{methods:?}");
+    assert!(
+        methods.contains(&"item/agentMessage/delta".to_string()),
+        "{methods:?}"
+    );
     let started = methods.iter().position(|m| m == "turn/started");
     let first_delta = methods.iter().position(|m| m == "item/agentMessage/delta");
     assert!(started < first_delta, "{methods:?}");
 
     let read = harness
-        .request("thread/read", json!({"threadId": thread_id, "includeTurns": true}))
+        .request(
+            "thread/read",
+            json!({"threadId": thread_id, "includeTurns": true}),
+        )
         .await
         .expect("thread/read");
     let turns = read["thread"]["turns"].as_array().expect("turns");
@@ -53,7 +61,10 @@ async fn streamed_turn_produces_items_and_completes() {
         .filter(|item| item["type"] == "agentMessage")
         .filter_map(|item| item["text"].as_str())
         .collect();
-    assert!(texts.iter().any(|text| text.contains("You said: hello")), "{texts:?}");
+    assert!(
+        texts.iter().any(|text| text.contains("You said: hello")),
+        "{texts:?}"
+    );
     assert_eq!(turns[0]["status"], "completed");
 }
 
@@ -65,7 +76,10 @@ async fn interrupt_ends_the_turn_as_interrupted() {
     let turn_id = turn["turn"]["id"].as_str().expect("turn id").to_string();
     harness.next("item/agentMessage/delta").await;
     harness
-        .request("turn/interrupt", json!({"threadId": thread_id, "turnId": turn_id}))
+        .request(
+            "turn/interrupt",
+            json!({"threadId": thread_id, "turnId": turn_id}),
+        )
         .await
         .expect("turn/interrupt");
     let completed = harness.next("turn/completed").await;
@@ -83,7 +97,11 @@ async fn tool_calls_become_command_items() {
         .find(|item| item["type"] == "commandExecution")
         .expect("command item");
     assert_eq!(command["status"], "completed");
-    assert!(command["aggregatedOutput"].as_str().is_some_and(|out| !out.is_empty()));
+    assert!(
+        command["aggregatedOutput"]
+            .as_str()
+            .is_some_and(|out| !out.is_empty())
+    );
 }
 
 #[tokio::test]
@@ -119,9 +137,16 @@ async fn edit_permission_accept_and_decline() {
         .await;
     harness.next("serverRequest/resolved").await;
     let (items, _) = completed_items(&mut harness).await;
-    let change = items.iter().find(|item| item["type"] == "fileChange").expect("file change");
+    let change = items
+        .iter()
+        .find(|item| item["type"] == "fileChange")
+        .expect("file change");
     assert_eq!(change["status"], "completed");
-    assert!(change["changes"][0]["diff"].as_str().is_some_and(|diff| diff.contains("+c")));
+    assert!(
+        change["changes"][0]["diff"]
+            .as_str()
+            .is_some_and(|diff| diff.contains("+c"))
+    );
 
     harness.send_turn(&thread_id, "edit again").await;
     let request = harness.next("item/fileChange/requestApproval").await;
@@ -129,14 +154,20 @@ async fn edit_permission_accept_and_decline() {
         .respond(request["id"].clone(), json!({"decision": "decline"}))
         .await;
     let (items, _) = completed_items(&mut harness).await;
-    let change = items.iter().find(|item| item["type"] == "fileChange").expect("file change");
+    let change = items
+        .iter()
+        .find(|item| item["type"] == "fileChange")
+        .expect("file change");
     assert_eq!(change["status"], "failed");
 }
 
 #[tokio::test]
 async fn default_policy_is_not_yolo() {
     let mut harness = Harness::start(HarnessConfig::default()).await;
-    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    let started = harness
+        .request("thread/start", json!({}))
+        .await
+        .expect("thread/start");
     assert_eq!(started["approvalPolicy"], "on-request");
     assert_eq!(started["sandbox"]["type"], "externalSandbox");
 }
@@ -148,23 +179,39 @@ async fn yolo_approves_permissions_but_still_asks_elicitations() {
         ..HarnessConfig::default()
     })
     .await;
-    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    let started = harness
+        .request("thread/start", json!({}))
+        .await
+        .expect("thread/start");
     assert_eq!(started["approvalPolicy"], "never");
     assert_eq!(started["sandbox"]["type"], "dangerFullAccess");
-    let thread_id = started["thread"]["id"].as_str().expect("thread id").to_string();
+    let thread_id = started["thread"]["id"]
+        .as_str()
+        .expect("thread id")
+        .to_string();
 
     harness.send_turn(&thread_id, "edit please").await;
     let methods = harness.methods_until("turn/completed").await;
     assert!(
-        !methods.iter().any(|method| method.ends_with("/requestApproval")),
+        !methods
+            .iter()
+            .any(|method| method.ends_with("/requestApproval")),
         "{methods:?}"
     );
     let read = harness
-        .request("thread/read", json!({"threadId": thread_id, "includeTurns": true}))
+        .request(
+            "thread/read",
+            json!({"threadId": thread_id, "includeTurns": true}),
+        )
         .await
         .expect("thread/read");
-    let items = read["thread"]["turns"][0]["items"].as_array().expect("items");
-    let change = items.iter().find(|item| item["type"] == "fileChange").expect("file change");
+    let items = read["thread"]["turns"][0]["items"]
+        .as_array()
+        .expect("items");
+    let change = items
+        .iter()
+        .find(|item| item["type"] == "fileChange")
+        .expect("file change");
     assert_eq!(change["status"], "completed");
 
     harness.send_turn(&thread_id, "ask me").await;
@@ -180,7 +227,10 @@ async fn interrupt_resolves_pending_permission() {
     let turn_id = turn["turn"]["id"].as_str().expect("turn id").to_string();
     let request = harness.next("item/fileChange/requestApproval").await;
     harness
-        .request("turn/interrupt", json!({"threadId": thread_id, "turnId": turn_id}))
+        .request(
+            "turn/interrupt",
+            json!({"threadId": thread_id, "turnId": turn_id}),
+        )
         .await
         .expect("interrupt");
     let resolved = harness.next("serverRequest/resolved").await;
@@ -226,7 +276,10 @@ async fn model_list_and_settings_follow_config_options() {
     })
     .await;
     let thread_id = harness.start_thread().await;
-    let models = harness.request("model/list", json!({})).await.expect("model/list");
+    let models = harness
+        .request("model/list", json!({}))
+        .await
+        .expect("model/list");
     let ids: Vec<&str> = models["data"]
         .as_array()
         .expect("data")
@@ -243,10 +296,16 @@ async fn model_list_and_settings_follow_config_options() {
         )
         .await
         .expect("settings");
-    let models = harness.request("model/list", json!({})).await.expect("model/list");
+    let models = harness
+        .request("model/list", json!({}))
+        .await
+        .expect("model/list");
     assert_eq!(models["data"][1]["isDefault"], true);
     let read = harness
-        .request("thread/read", json!({"threadId": thread_id, "includeTurns": false}))
+        .request(
+            "thread/read",
+            json!({"threadId": thread_id, "includeTurns": false}),
+        )
         .await
         .expect("read");
     assert_eq!(read["thread"]["model"], "large");
@@ -277,7 +336,10 @@ async fn list_and_resume_rebuild_history() {
         ..HarnessConfig::default()
     })
     .await;
-    let list = harness.request("thread/list", json!({})).await.expect("thread/list");
+    let list = harness
+        .request("thread/list", json!({}))
+        .await
+        .expect("thread/list");
     let threads = list["data"].as_array().expect("data");
     let old = threads
         .iter()
@@ -317,7 +379,10 @@ async fn list_and_resume_rebuild_history() {
             .collect()
     };
     assert_eq!(kinds(&turns[0]), vec!["userMessage", "agentMessage"]);
-    assert_eq!(kinds(&turns[1]), vec!["userMessage", "commandExecution", "agentMessage"]);
+    assert_eq!(
+        kinds(&turns[1]),
+        vec!["userMessage", "commandExecution", "agentMessage"]
+    );
 
     // The resumed thread accepts new turns.
     harness.send_turn(&thread_id, "hello again").await;
@@ -353,7 +418,11 @@ async fn refusal_completes_with_a_warning() {
     let thread_id = harness.start_thread().await;
     harness.send_turn(&thread_id, "refuse this").await;
     let warning = harness.next("warning").await;
-    assert!(warning["params"]["message"].as_str().is_some_and(|m| m.contains("refused")));
+    assert!(
+        warning["params"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("refused"))
+    );
     let completed = harness.next("turn/completed").await;
     assert_eq!(completed["params"]["turn"]["status"], "completed");
 }
@@ -410,7 +479,10 @@ fn two_agents() -> HarnessConfig {
 #[tokio::test]
 async fn agent_select_signs_in_then_new_threads_use_the_agent() {
     let mut harness = Harness::start(two_agents()).await;
-    let list = harness.request("acpc/agent/list", json!({})).await.expect("list");
+    let list = harness
+        .request("acpc/agent/list", json!({}))
+        .await
+        .expect("list");
     assert_eq!(list["current"], "mock");
     assert_eq!(list["agents"].as_array().map(Vec::len), Some(2));
 
@@ -420,7 +492,9 @@ async fn agent_select_signs_in_then_new_threads_use_the_agent() {
     let auth = harness.next("acpc/auth/select").await;
     assert_eq!(auth["params"]["agentName"], "Locked");
     assert_eq!(auth["params"]["methods"][0]["id"], "login");
-    harness.respond(auth["id"].clone(), json!({"methodId": "login"})).await;
+    harness
+        .respond(auth["id"].clone(), json!({"methodId": "login"}))
+        .await;
     harness.response(select).await.expect("agent/select");
     // Earlier updates (sent after initialize) still name the old agent.
     loop {
@@ -430,7 +504,10 @@ async fn agent_select_signs_in_then_new_threads_use_the_agent() {
         }
     }
 
-    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    let started = harness
+        .request("thread/start", json!({}))
+        .await
+        .expect("thread/start");
     assert_eq!(started["thread"]["modelProvider"], "locked");
     let thread_id = started["thread"]["id"].as_str().expect("id").to_string();
     harness.send_turn(&thread_id, "hello").await;
@@ -445,10 +522,23 @@ async fn cancelled_sign_in_keeps_the_current_agent() {
         .send_request("acpc/agent/select", json!({"slug": "locked"}))
         .await;
     let auth = harness.next("acpc/auth/select").await;
-    harness.respond(auth["id"].clone(), json!({"methodId": null})).await;
-    let error = harness.response(select).await.expect_err("sign-in was cancelled");
-    assert!(error["message"].as_str().is_some_and(|m| m.contains("cancelled")), "{error}");
-    let list = harness.request("acpc/agent/list", json!({})).await.expect("list");
+    harness
+        .respond(auth["id"].clone(), json!({"methodId": null}))
+        .await;
+    let error = harness
+        .response(select)
+        .await
+        .expect_err("sign-in was cancelled");
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("cancelled")),
+        "{error}"
+    );
+    let list = harness
+        .request("acpc/agent/list", json!({}))
+        .await
+        .expect("list");
     assert_eq!(list["current"], "mock");
 }
 
@@ -522,14 +612,20 @@ async fn turn_end_keeps_another_agents_request_scoped_elicitation() {
     let request = harness.next("mcpServer/elicitation/request").await;
 
     harness
-        .request("turn/interrupt", json!({"threadId": mine, "turnId": turn_id}))
+        .request(
+            "turn/interrupt",
+            json!({"threadId": mine, "turnId": turn_id}),
+        )
         .await
         .expect("turn/interrupt");
     loop {
         let message = harness
             .next_any(&["serverRequest/resolved", "turn/completed"])
             .await;
-        assert_ne!(message["params"]["requestId"], request["id"], "withdrawn: {message}");
+        assert_ne!(
+            message["params"]["requestId"], request["id"],
+            "withdrawn: {message}"
+        );
         if message["method"] == "turn/completed" && message["params"]["threadId"] == mine.as_str() {
             break;
         }
@@ -567,7 +663,10 @@ async fn out_of_turn_elicitation_is_withdrawn_when_the_agent_withdraws_it() {
     // Once its turn is cancelled, the agent withdraws the unanswered
     // question with `$/cancel_request`.
     harness
-        .request("turn/interrupt", json!({"threadId": setup, "turnId": turn_id}))
+        .request(
+            "turn/interrupt",
+            json!({"threadId": setup, "turnId": turn_id}),
+        )
         .await
         .expect("turn/interrupt");
     let resolved = harness.next("serverRequest/resolved").await;
@@ -589,7 +688,10 @@ async fn duplicate_resume_while_the_agent_connects_is_refused() {
         ..HarnessConfig::default()
     })
     .await;
-    let list = harness.request("thread/list", json!({})).await.expect("thread/list");
+    let list = harness
+        .request("thread/list", json!({}))
+        .await
+        .expect("thread/list");
     let thread_id = list["data"]
         .as_array()
         .expect("data")
@@ -604,11 +706,16 @@ async fn duplicate_resume_while_the_agent_connects_is_refused() {
         .send_request("acpc/agent/select", json!({"slug": "mock"}))
         .await;
     let auth = harness.next("acpc/auth/select").await;
-    harness.respond(auth["id"].clone(), json!({"methodId": "tlogin"})).await;
+    harness
+        .respond(auth["id"].clone(), json!({"methodId": "tlogin"}))
+        .await;
     let run = harness.next("acpc/terminal/run").await;
     // What the login command would have recorded.
-    std::fs::write(harness.state_dir.path().join("mock/authenticated"), "ok\n").expect("auth marker");
-    harness.respond(run["id"].clone(), json!({"exitCode": 0})).await;
+    std::fs::write(harness.state_dir.path().join("mock/authenticated"), "ok\n")
+        .expect("auth marker");
+    harness
+        .respond(run["id"].clone(), json!({"exitCode": 0}))
+        .await;
 
     // Both wait for the restarted agent.
     let first = harness
@@ -617,9 +724,14 @@ async fn duplicate_resume_while_the_agent_connects_is_refused() {
     let second = harness
         .send_request("thread/resume", json!({"threadId": thread_id}))
         .await;
-    let error = harness.response(second).await.expect_err("duplicate resume");
+    let error = harness
+        .response(second)
+        .await
+        .expect_err("duplicate resume");
     assert!(
-        error["message"].as_str().is_some_and(|m| m.contains("already being opened")),
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("already being opened")),
         "{error}"
     );
     let resumed = harness.response(first).await.expect("thread/resume");
@@ -634,7 +746,10 @@ async fn only_threads_their_agent_can_reopen_are_resumable() {
             ("mock".to_string(), "Mock".to_string()),
             ("nolist".to_string(), "No list".to_string()),
         ],
-        agent_scenarios: vec![("nolist".to_string(), json!({"capabilities": {"list": false}}))],
+        agent_scenarios: vec![(
+            "nolist".to_string(),
+            json!({"capabilities": {"list": false}}),
+        )],
         ..HarnessConfig::default()
     })
     .await;
@@ -672,10 +787,15 @@ async fn prompt_that_needs_sign_in_offers_it_then_works() {
     assert_eq!(failed["params"]["turn"]["status"], "failed");
     let auth = harness.next("acpc/auth/select").await;
     assert_eq!(auth["params"]["methods"][0]["id"], "login");
-    harness.respond(auth["id"].clone(), json!({"methodId": "login"})).await;
+    harness
+        .respond(auth["id"].clone(), json!({"methodId": "login"}))
+        .await;
     let notice = harness.next("acpc/notice").await;
     assert_eq!(notice["params"]["threadId"], thread_id.as_str());
-    assert_eq!(notice["params"]["title"], "Signed in. Send your message again.");
+    assert_eq!(
+        notice["params"]["title"],
+        "Signed in. Send your message again."
+    );
 
     harness.send_turn(&thread_id, "hello").await;
     let completed = harness.next("turn/completed").await;
@@ -693,7 +813,9 @@ async fn switching_agents_can_bring_the_conversation() {
     })
     .await;
     let first = harness.start_thread().await;
-    harness.send_turn(&first, "remember the word pineapple").await;
+    harness
+        .send_turn(&first, "remember the word pineapple")
+        .await;
     harness.next("turn/completed").await;
 
     // `/agent` → "Bring this conversation": select, then fork onto it.
@@ -701,10 +823,17 @@ async fn switching_agents_can_bring_the_conversation() {
         .request("acpc/agent/select", json!({"slug": "other"}))
         .await
         .expect("agent/select");
-    let forked = harness.request("thread/fork", json!({"threadId": first})).await.expect("thread/fork");
+    let forked = harness
+        .request("thread/fork", json!({"threadId": first}))
+        .await
+        .expect("thread/fork");
     assert_eq!(forked["modelProvider"], "other");
     assert_eq!(forked["thread"]["forkedFromId"], first.as_str());
-    assert_eq!(forked["thread"]["turns"].as_array().map(Vec::len), Some(1), "{forked}");
+    assert_eq!(
+        forked["thread"]["turns"].as_array().map(Vec::len),
+        Some(1),
+        "{forked}"
+    );
     let second = forked["thread"]["id"].as_str().expect("id").to_string();
     assert_ne!(second, first);
 
@@ -714,7 +843,10 @@ async fn switching_agents_can_bring_the_conversation() {
 
     // The fork shows the source's turn, then only what the user typed.
     let read = harness
-        .request("thread/read", json!({"threadId": second, "includeTurns": true}))
+        .request(
+            "thread/read",
+            json!({"threadId": second, "includeTurns": true}),
+        )
         .await
         .expect("thread/read");
     let turns = read["thread"]["turns"].as_array().expect("turns");
@@ -736,12 +868,13 @@ fn claude_edit_turn() -> Value {
     };
     let update = |id: &str, fields: Value| {
         let mut update = json!({"sessionUpdate": "tool_call_update", "toolCallId": id});
-        update.as_object_mut().expect("object").extend(fields.as_object().expect("fields").clone());
+        update
+            .as_object_mut()
+            .expect("object")
+            .extend(fields.as_object().expect("fields").clone());
         json!({"update": update})
     };
-    let diff = |file: &str, old: Value, new: &str| {
-        json!([{"type": "diff", "path": format!("{{{{cwd}}}}/{file}"), "oldText": old, "newText": new}])
-    };
+    let diff = |file: &str, old: Value, new: &str| json!([{"type": "diff", "path": format!("{{{{cwd}}}}/{file}"), "oldText": old, "newText": new}]);
     let at = |file: &str, line: Option<u32>| match line {
         Some(line) => json!([{"path": format!("{{{{cwd}}}}/{file}"), "line": line}]),
         None => json!([{"path": format!("{{{{cwd}}}}/{file}")}]),
@@ -811,7 +944,12 @@ async fn claude_edits_start_with_their_final_diff() {
     let mut completed = Vec::new();
     loop {
         let message = harness
-            .next_any(&["item/started", "item/completed", "item/fileChange/requestApproval", "turn/completed"])
+            .next_any(&[
+                "item/started",
+                "item/completed",
+                "item/fileChange/requestApproval",
+                "turn/completed",
+            ])
             .await;
         match message["method"].as_str() {
             Some("turn/completed") => break,
@@ -821,7 +959,9 @@ async fn claude_edits_start_with_their_final_diff() {
                     started.iter().any(|started: &Value| started["id"] == item),
                     "the change is shown before its approval"
                 );
-                harness.respond(message["id"].clone(), json!({"decision": "accept"})).await;
+                harness
+                    .respond(message["id"].clone(), json!({"decision": "accept"}))
+                    .await;
             }
             Some("item/started") if item_type(&message) == "fileChange" => {
                 started.push(message["params"]["item"].clone());
@@ -839,9 +979,15 @@ async fn claude_edits_start_with_their_final_diff() {
     // The overwrite is read against the file before it is written.
     let overwrite = &started[1]["changes"][0];
     assert_eq!(overwrite["kind"]["type"], "update");
-    assert_eq!(overwrite["diff"], "@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n");
+    assert_eq!(
+        overwrite["diff"],
+        "@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n"
+    );
     let edit = &started[2]["changes"][0];
-    assert_eq!(edit["diff"], "@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n");
+    assert_eq!(
+        edit["diff"],
+        "@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n"
+    );
 
     assert_eq!(completed.len(), 3);
     let counts: Vec<_> = completed
@@ -853,20 +999,31 @@ async fn claude_edits_start_with_their_final_diff() {
         })
         .collect();
     assert_eq!(counts, vec![(3, 0), (1, 1), (1, 1)]);
-    assert_eq!(completed[1]["changes"][0]["diff"], "@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n");
+    assert_eq!(
+        completed[1]["changes"][0]["diff"],
+        "@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n"
+    );
 
     // The late hook diff reaches the stored turn, at its line.
     let read = harness
-        .request("thread/read", json!({"threadId": thread_id, "includeTurns": true}))
+        .request(
+            "thread/read",
+            json!({"threadId": thread_id, "includeTurns": true}),
+        )
         .await
         .expect("thread/read");
-    let items = read["thread"]["turns"][0]["items"].as_array().expect("items");
+    let items = read["thread"]["turns"][0]["items"]
+        .as_array()
+        .expect("items");
     let edit = items
         .iter()
         .filter(|item| item["type"] == "fileChange")
         .nth(2)
         .expect("edit item");
-    assert_eq!(edit["changes"][0]["diff"], "@@ -2,2 +2,2 @@\n-beta\n+BETA\n gamma\n");
+    assert_eq!(
+        edit["changes"][0]["diff"],
+        "@@ -2,2 +2,2 @@\n-beta\n+BETA\n gamma\n"
+    );
 }
 
 /// What claude-agent-acp replays for those calls on `session/load`: the
@@ -878,19 +1035,17 @@ fn claude_edit_history() -> Value {
             "content": [{"type": "diff", "path": format!("/w/{file}"), "oldText": old, "newText": new}],
             "locations": [{"path": format!("/w/{file}")}]})
     };
-    let completed = |id: &str| {
-        json!({"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed"})
-    };
+    let completed = |id: &str| json!({"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed"});
     json!({"sessions": [{"session_id": "claude-1", "cwd": "/", "title": "Claude edits",
-        "updated_at": "2026-01-01T00:00:00Z",
-        "history": [
-            {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "edit"}},
-            call("w1", "Write new.txt", "new.txt", Value::Null, "one\ntwo\nthree\n"),
-            completed("w1"),
-            call("e1", "Edit edit.txt", "edit.txt", json!("beta"), "BETA"),
-            completed("e1"),
-            {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done"}}
-        ]}]})
+    "updated_at": "2026-01-01T00:00:00Z",
+    "history": [
+        {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "edit"}},
+        call("w1", "Write new.txt", "new.txt", Value::Null, "one\ntwo\nthree\n"),
+        completed("w1"),
+        call("e1", "Edit edit.txt", "edit.txt", json!("beta"), "BETA"),
+        completed("e1"),
+        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done"}}
+    ]}]})
 }
 
 #[tokio::test]
@@ -900,7 +1055,10 @@ async fn resumed_claude_edits_keep_their_diffs() {
         ..HarnessConfig::default()
     })
     .await;
-    let list = harness.request("thread/list", json!({})).await.expect("thread/list");
+    let list = harness
+        .request("thread/list", json!({}))
+        .await
+        .expect("thread/list");
     let thread_id = list["data"]
         .as_array()
         .expect("data")
