@@ -25,6 +25,7 @@ dependencies = [
  "codex-protocol",
  "codex-utils-absolute-path",
  "codex-utils-path-uri",
+ "diffy",
  "pretty_assertions",
  "serde",
  "serde_json",

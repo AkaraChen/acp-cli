@@ -49,6 +49,11 @@ struct ToolEntry {
     call: acp::ToolCall,
     started_at_ms: i64,
     emitted_output: String,
+    /// How the call ended, once it has.
+    outcome: Option<Outcome>,
+    /// `item/started` went out. A file change waits for its diff: the TUI
+    /// draws the change (and its `+N -M`) once, from `item/started`.
+    announced: bool,
     finished: bool,
 }
 
@@ -259,11 +264,80 @@ impl TurnBuilder {
         } else {
             self.tool_call_update(update.clone(), emit);
         }
+        // The approval shows the change, so announce it now, with diffs read
+        // against the files the tool has not touched yet.
+        if let Some(entry) = self.tools.get_mut(&key)
+            && entry.kind == ItemKind::FileChange
+            && !entry.finished
+        {
+            tool_calls::resolve_against_files(&mut entry.call, &self.cwd);
+            self.refresh_file_change(&key, None, emit);
+            self.announce(&key, emit);
+        }
         let entry = &self.tools[&key];
         (
             item_id(&self.items[entry.index].payload).to_string(),
             entry.kind,
         )
+    }
+
+    /// Emit `item/started` for a tool item that has not had it yet.
+    fn announce(&mut self, key: &str, emit: &mut Emit) {
+        let Some(entry) = self.tools.get_mut(key) else {
+            return;
+        };
+        if entry.announced {
+            return;
+        }
+        entry.announced = true;
+        let index = entry.index;
+        self.started(index, emit);
+    }
+
+    /// Rebuild a file change item from its call, telling the client when an
+    /// announced item's changes moved.
+    fn refresh_file_change(&mut self, key: &str, outcome: Option<Outcome>, emit: &mut Emit) {
+        let Some(entry) = self.tools.get(key) else {
+            return;
+        };
+        let index = entry.index;
+        let item_id = item_id(&self.items[index].payload).to_string();
+        let payload = tool_calls::payload(
+            &item_id,
+            ItemKind::FileChange,
+            &entry.call,
+            outcome.unwrap_or(Outcome::Running),
+            &self.cwd,
+            None,
+        );
+        let changed = match (&self.items[index].payload, &payload) {
+            (
+                ThreadItemPayload::FileChange { changes: before, .. },
+                ThreadItemPayload::FileChange { changes: after, .. },
+            ) => before != after,
+            _ => true,
+        };
+        if changed
+            && entry.announced
+            && let ThreadItemPayload::FileChange { changes, .. } = &payload
+        {
+            emit.push(ServerNotification::FileChangePatchUpdated(
+                FileChangePatchUpdatedNotification {
+                    thread_id: self.thread_id.clone(),
+                    turn_id: self.id.clone(),
+                    item_id,
+                    changes: changes.clone(),
+                },
+            ));
+        }
+        match (&mut self.items[index].payload, payload) {
+            // A finished item keeps its outcome and duration.
+            (
+                ThreadItemPayload::FileChange { changes, .. },
+                ThreadItemPayload::FileChange { changes: fresh, .. },
+            ) if outcome.is_some() => *changes = fresh,
+            (slot, payload) => *slot = payload,
+        }
     }
 
     pub(crate) fn tool_call(&mut self, call: acp::ToolCall, emit: &mut Emit) {
@@ -288,7 +362,13 @@ impl TurnBuilder {
         let payload = tool_calls::payload(&id, kind, &call, Outcome::Running, &self.cwd, None);
         self.items.push(records::item(payload, now));
         let index = self.items.len() - 1;
-        self.started(index, emit);
+        // Agents announce an edit before its diff is known (claude-agent-acp
+        // sends "Edit" with no content while the input streams), so a file
+        // change starts at its permission request or when it finishes.
+        let announced = kind != ItemKind::FileChange;
+        if announced {
+            self.started(index, emit);
+        }
         let output = tool_calls::output_text(&call);
         let finished = tool_calls::outcome(&call) != Outcome::Running;
         self.tools.insert(
@@ -299,6 +379,8 @@ impl TurnBuilder {
                 call,
                 started_at_ms: now,
                 emitted_output: String::new(),
+                outcome: None,
+                announced,
                 finished: false,
             },
         );
@@ -319,12 +401,17 @@ impl TurnBuilder {
             return;
         };
         if entry.finished {
+            // claude-agent-acp sends the final diff of an edit from a hook
+            // that can run after the call completed; keep the item current.
+            if entry.kind == ItemKind::FileChange && update.fields.content.is_some() {
+                let outcome = entry.outcome;
+                let mut fields = update.fields;
+                fields.status = None;
+                tool_calls::apply_update(&mut entry.call, fields);
+                self.refresh_file_change(&key, outcome, emit);
+            }
             return;
         }
-        let previous_changes = match &self.items[entry.index].payload {
-            ThreadItemPayload::FileChange { changes, .. } => Some(changes.clone()),
-            _ => None,
-        };
         tool_calls::apply_update(&mut entry.call, update.fields);
         let kind = entry.kind;
         let finished = tool_calls::outcome(&entry.call) != Outcome::Running;
@@ -346,32 +433,7 @@ impl TurnBuilder {
                     self.emit_output(&key, emit);
                 }
             }
-            ItemKind::FileChange => {
-                let entry = &self.tools[&key];
-                let item_id = item_id(&self.items[entry.index].payload).to_string();
-                let payload = tool_calls::payload(
-                    &item_id,
-                    kind,
-                    &entry.call,
-                    Outcome::Running,
-                    &self.cwd,
-                    None,
-                );
-                let index = entry.index;
-                if let ThreadItemPayload::FileChange { changes, .. } = &payload
-                    && previous_changes.as_ref() != Some(changes)
-                {
-                    emit.push(ServerNotification::FileChangePatchUpdated(
-                        FileChangePatchUpdatedNotification {
-                            thread_id: self.thread_id.clone(),
-                            turn_id: self.id.clone(),
-                            item_id,
-                            changes: changes.clone(),
-                        },
-                    ));
-                }
-                self.items[index].payload = payload;
-            }
+            ItemKind::FileChange => self.refresh_file_change(&key, None, emit),
         }
         if finished {
             self.finish_tool(&key, None, emit);
@@ -417,6 +479,17 @@ impl TurnBuilder {
             Outcome::Running => Outcome::Failed,
             outcome => outcome,
         });
+        entry.outcome = Some(outcome);
+        if !entry.announced {
+            // A file change starts here with its final changes.
+            if entry.kind == ItemKind::FileChange {
+                self.refresh_file_change(key, None, emit);
+            }
+            self.announce(key, emit);
+        }
+        let Some(entry) = self.tools.get_mut(key) else {
+            return;
+        };
         let duration = records::now_ms().saturating_sub(entry.started_at_ms);
         let index = entry.index;
         let item_id = item_id(&self.items[index].payload).to_string();
@@ -490,6 +563,8 @@ impl TurnBuilder {
                 call: acp::ToolCall::new("compaction", "Compaction"),
                 started_at_ms: records::now_ms(),
                 emitted_output: String::new(),
+                outcome: None,
+                announced: true,
                 finished,
             },
         );

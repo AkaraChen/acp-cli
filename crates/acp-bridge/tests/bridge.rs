@@ -684,3 +684,209 @@ async fn switching_agents_can_bring_the_conversation() {
     assert_eq!(user["content"].as_array().map(Vec::len), Some(1), "{user}");
     assert_eq!(user["content"][0]["text"], "what was the word?");
 }
+
+/// What claude-agent-acp 0.106 sends a v1 client for a Write that creates a
+/// file (no permission asked), a Write that overwrites one and an Edit (both
+/// asked): the call opens with no diff, the diff follows from the input, and
+/// once the tool ran a hook sends the final diff, one block per hunk.
+fn claude_edit_turn() -> Value {
+    let call = |id: &str, name: &str| {
+        json!({"update": {"sessionUpdate": "tool_call", "toolCallId": id, "name": name,
+            "status": "pending", "title": if name == "Edit" { "Edit" } else { "Preparing file…" },
+            "kind": "edit", "content": [], "locations": []}})
+    };
+    let update = |id: &str, fields: Value| {
+        let mut update = json!({"sessionUpdate": "tool_call_update", "toolCallId": id});
+        update.as_object_mut().expect("object").extend(fields.as_object().expect("fields").clone());
+        json!({"update": update})
+    };
+    let diff = |file: &str, old: Value, new: &str| {
+        json!([{"type": "diff", "path": format!("{{{{cwd}}}}/{file}"), "oldText": old, "newText": new}])
+    };
+    let at = |file: &str, line: Option<u32>| match line {
+        Some(line) => json!([{"path": format!("{{{{cwd}}}}/{file}"), "line": line}]),
+        None => json!([{"path": format!("{{{{cwd}}}}/{file}")}]),
+    };
+    let completed = |id: &str| update(id, json!({"status": "completed"}));
+    let permission = |id: &str, title: &str, file: &str, content: Value, on: Vec<Value>| {
+        json!({"permission": {
+            "tool_call": {"toolCallId": id, "title": title, "kind": "edit", "status": "pending",
+                "content": content, "locations": at(file, None)},
+            "on": {"allow_once": on}
+        }})
+    };
+    json!({"turns": [{"match": "claude edits", "steps": [
+        call("w1", "Write"),
+        update("w1", json!({"title": "Write new.txt", "locations": at("new.txt", None)})),
+        update("w1", json!({"content": diff("new.txt", Value::Null, "one\ntwo\nthree\n")})),
+        update("w1", json!({"_meta": {"claudeCode": {"toolName": "Write"}}})),
+        completed("w1"),
+        call("w2", "Write"),
+        update("w2", json!({"title": "Write old.txt", "locations": at("old.txt", None)})),
+        update("w2", json!({"content": diff("old.txt", Value::Null, "a\nb\nX\nd\ne\n")})),
+        permission("w2", "Write old.txt", "old.txt", diff("old.txt", Value::Null, "a\nb\nX\nd\ne\n"), vec![
+            update("w2", json!({"content": diff("old.txt", json!("a\nb\nc\nd\ne"), "a\nb\nX\nd\ne"),
+                "locations": at("old.txt", Some(1))})),
+            completed("w2"),
+        ]),
+        call("e1", "Edit"),
+        update("e1", json!({"title": "Edit edit.txt", "locations": at("edit.txt", None)})),
+        update("e1", json!({})),
+        update("e1", json!({"content": diff("edit.txt", json!("beta"), "BETA")})),
+        permission("e1", "Edit edit.txt", "edit.txt", diff("edit.txt", json!("beta"), "BETA"), vec![
+            completed("e1"),
+            // The hook may land after the result.
+            update("e1", json!({"content": diff("edit.txt", json!("beta\ngamma"), "BETA\ngamma"),
+                "locations": at("edit.txt", Some(2))})),
+        ]),
+        {"text": "done"}
+    ]}]})
+}
+
+/// The `+N -M` the TUI draws for a change.
+fn change_counts(change: &Value) -> (usize, usize) {
+    let diff = change["diff"].as_str().expect("diff");
+    match change["kind"]["type"].as_str() {
+        Some("add") => (diff.lines().count(), 0),
+        _ => (
+            diff.lines().filter(|line| line.starts_with('+')).count(),
+            diff.lines().filter(|line| line.starts_with('-')).count(),
+        ),
+    }
+}
+
+#[tokio::test]
+async fn claude_edits_start_with_their_final_diff() {
+    let mut harness = Harness::start(HarnessConfig {
+        scenario: Some(claude_edit_turn()),
+        ..HarnessConfig::default()
+    })
+    .await;
+    let cwd = harness.cwd.path().to_path_buf();
+    std::fs::write(cwd.join("old.txt"), "a\nb\nc\nd\ne\n").expect("write");
+    std::fs::write(cwd.join("edit.txt"), "alpha\nbeta\ngamma\n").expect("write");
+    let thread_id = harness.start_thread().await;
+    harness.send_turn(&thread_id, "claude edits").await;
+
+    let mut started = Vec::new();
+    let mut completed = Vec::new();
+    loop {
+        let message = harness
+            .next_any(&["item/started", "item/completed", "item/fileChange/requestApproval", "turn/completed"])
+            .await;
+        match message["method"].as_str() {
+            Some("turn/completed") => break,
+            Some("item/fileChange/requestApproval") => {
+                let item = message["params"]["itemId"].clone();
+                assert!(
+                    started.iter().any(|started: &Value| started["id"] == item),
+                    "the change is shown before its approval"
+                );
+                harness.respond(message["id"].clone(), json!({"decision": "accept"})).await;
+            }
+            Some("item/started") if item_type(&message) == "fileChange" => {
+                started.push(message["params"]["item"].clone());
+            }
+            Some("item/completed") if item_type(&message) == "fileChange" => {
+                completed.push(message["params"]["item"].clone());
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(started.len(), 3, "{started:#?}");
+    let created = &started[0]["changes"][0];
+    assert_eq!(created["kind"]["type"], "add");
+    assert_eq!(created["diff"], "one\ntwo\nthree\n");
+    // The overwrite is read against the file before it is written.
+    let overwrite = &started[1]["changes"][0];
+    assert_eq!(overwrite["kind"]["type"], "update");
+    assert_eq!(overwrite["diff"], "@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n");
+    let edit = &started[2]["changes"][0];
+    assert_eq!(edit["diff"], "@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n");
+
+    assert_eq!(completed.len(), 3);
+    let counts: Vec<_> = completed
+        .iter()
+        .map(|item| {
+            assert_eq!(item["status"], "completed");
+            assert_eq!(item["changes"].as_array().map(Vec::len), Some(1));
+            change_counts(&item["changes"][0])
+        })
+        .collect();
+    assert_eq!(counts, vec![(3, 0), (1, 1), (1, 1)]);
+    assert_eq!(completed[1]["changes"][0]["diff"], "@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n");
+
+    // The late hook diff reaches the stored turn, at its line.
+    let read = harness
+        .request("thread/read", json!({"threadId": thread_id, "includeTurns": true}))
+        .await
+        .expect("thread/read");
+    let items = read["thread"]["turns"][0]["items"].as_array().expect("items");
+    let edit = items
+        .iter()
+        .filter(|item| item["type"] == "fileChange")
+        .nth(2)
+        .expect("edit item");
+    assert_eq!(edit["changes"][0]["diff"], "@@ -2,2 +2,2 @@\n-beta\n+BETA\n gamma\n");
+}
+
+/// What claude-agent-acp replays for those calls on `session/load`: the
+/// diffs from the input, never the hook's.
+fn claude_edit_history() -> Value {
+    let call = |id: &str, title: &str, file: &str, old: Value, new: &str| {
+        json!({"sessionUpdate": "tool_call", "toolCallId": id, "status": "pending", "title": title,
+            "kind": "edit",
+            "content": [{"type": "diff", "path": format!("/w/{file}"), "oldText": old, "newText": new}],
+            "locations": [{"path": format!("/w/{file}")}]})
+    };
+    let completed = |id: &str| {
+        json!({"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed"})
+    };
+    json!({"sessions": [{"session_id": "claude-1", "cwd": "/", "title": "Claude edits",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "history": [
+            {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "edit"}},
+            call("w1", "Write new.txt", "new.txt", Value::Null, "one\ntwo\nthree\n"),
+            completed("w1"),
+            call("e1", "Edit edit.txt", "edit.txt", json!("beta"), "BETA"),
+            completed("e1"),
+            {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done"}}
+        ]}]})
+}
+
+#[tokio::test]
+async fn resumed_claude_edits_keep_their_diffs() {
+    let mut harness = Harness::start(HarnessConfig {
+        scenario: Some(claude_edit_history()),
+        ..HarnessConfig::default()
+    })
+    .await;
+    let list = harness.request("thread/list", json!({})).await.expect("thread/list");
+    let thread_id = list["data"]
+        .as_array()
+        .expect("data")
+        .iter()
+        .find(|thread| thread["name"] == "Claude edits")
+        .and_then(|thread| thread["id"].as_str())
+        .expect("listed session")
+        .to_string();
+    let resumed = harness
+        .request("thread/resume", json!({"threadId": thread_id}))
+        .await
+        .expect("thread/resume");
+    let changes: Vec<Value> = resumed["thread"]["turns"][0]["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|item| item["type"] == "fileChange")
+        .map(|item| {
+            assert_eq!(item["status"], "completed");
+            item["changes"][0].clone()
+        })
+        .collect();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[0]["diff"], "one\ntwo\nthree\n");
+    assert_eq!(change_counts(&changes[0]), (3, 0));
+    assert_eq!(changes[1]["diff"], "@@ -1 +1 @@\n-beta\n+BETA\n");
+    assert_eq!(change_counts(&changes[1]), (1, 1));
+}

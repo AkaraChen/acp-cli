@@ -28,6 +28,7 @@ uuid = { workspace = true, features = ["v4", "v5"] }
 chrono = { workspace = true }
 
 [dev-dependencies]
+diffy = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tempfile = { workspace = true }
