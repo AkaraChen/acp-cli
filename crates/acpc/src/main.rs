@@ -54,6 +54,11 @@ struct Cli {
     #[arg(long = "cd", short = 'C', global = true, value_name = "DIR")]
     cwd: Option<PathBuf>,
 
+    /// YOLO mode: approve every agent permission request without asking.
+    /// Same as `yolo = true` in config.toml.
+    #[arg(long, global = true)]
+    yolo: bool,
+
     /// Optional first prompt.
     #[arg(value_name = "PROMPT")]
     prompt: Option<String>,
@@ -221,6 +226,7 @@ async fn run(cli: Cli, config: Config, home: Home, env_restore: EnvRestore) -> a
         mcp_servers: config.mcp_servers(),
         user_agent: format!("acpc/{} (acpc {ACPC_VERSION})", env!("CARGO_PKG_VERSION")),
         resumable: std::sync::Arc::clone(&resumable),
+        yolo: cli.yolo || config.yolo,
     };
     let shutdown = CancellationToken::new();
 

@@ -325,7 +325,7 @@ fn respond_loaded(bridge: &Bridge, conn: ConnectionId, id: RequestId, thread_id:
     let Some(thread) = bridge.threads.get(thread_id) else {
         return;
     };
-    bridge.respond(conn, id, records::thread_resume_response(thread));
+    bridge.respond(conn, id, records::thread_resume_response(thread, bridge.options.yolo));
     crate::ext::thread_state(bridge, thread);
     // Approvals the client dropped while it was elsewhere.
     bridge.resend_server_requests(conn, thread_id);
@@ -453,7 +453,7 @@ fn resume_without_history(
                 Ok(response) => {
                     thread.loaded = true;
                     thread.apply_session_setup(response.config_options, response.modes);
-                    let reply = records::thread_resume_response(thread);
+                    let reply = records::thread_resume_response(thread, bridge.options.yolo);
                     bridge.respond(conn, id, reply);
                     if let Some(thread) = bridge.threads.get(&thread_id) {
                         crate::ext::thread_state(bridge, thread);
@@ -543,7 +543,7 @@ pub(crate) fn on_load_finished(
                 thread.preview = first_user_text(thread).unwrap_or_default();
             }
             thread.apply_session_setup(response.config_options, response.modes);
-            let reply = records::thread_resume_response(thread);
+            let reply = records::thread_resume_response(thread, bridge.options.yolo);
             let thread_id = thread.id.clone();
             let lineage = thread.forked_from.clone().map(|parent| (parent, thread.cwd.clone()));
             bridge.respond(conn, id, reply);

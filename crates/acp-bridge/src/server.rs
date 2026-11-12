@@ -66,6 +66,10 @@ pub struct BridgeOptions {
     /// sessions, i.e. the ones `acpc resume -a <agent> <id>` can continue,
     /// mapped to that agent's slug.
     pub resumable: Arc<Mutex<HashMap<String, String>>>,
+    /// Approve every agent permission request without asking (picking the
+    /// agent's allow option), and report "never ask, full access" so the
+    /// TUI shows YOLO mode. Elicitations are still shown.
+    pub yolo: bool,
 }
 
 pub enum BridgeTransport {

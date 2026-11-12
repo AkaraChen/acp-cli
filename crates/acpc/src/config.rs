@@ -2,6 +2,7 @@
 //!
 //! ```toml
 //! agent = "claude"                     # default agent slug
+//! yolo = false                         # true: approve agent permission requests without asking
 //!
 //! [[agents]]
 //! slug = "claude"
@@ -35,6 +36,9 @@ use serde::Deserialize;
 pub struct Config {
     /// Slug of the agent used when `--agent` is not given.
     pub agent: Option<String>,
+    /// Approve every agent permission request without asking (`--yolo`).
+    #[serde(default)]
+    pub yolo: bool,
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
     #[serde(default)]

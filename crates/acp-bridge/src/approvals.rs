@@ -221,6 +221,19 @@ pub(crate) fn on_permission(
         .unwrap_or_else(|| "Run tool".to_string());
     emit_all(bridge, emit);
 
+    // YOLO mode: take the agent's allow option without asking. A request
+    // with no allow option is still shown.
+    if bridge.options.yolo
+        && let Some(option_id) = option_for(&request.options, &Choice::AllowAlways)
+    {
+        tracing::debug!(%agent, option = %option_id, "yolo: approving permission request");
+        connection.respond_permission(
+            id,
+            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(option_id)),
+        );
+        return;
+    }
+
     let options = request.options.clone();
     let key = AgentRequestKey::new(agent, &connection, id);
     let issuing = Arc::downgrade(&connection);

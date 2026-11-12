@@ -263,7 +263,7 @@ fn on_session_update(bridge: &mut Bridge, agent: &str, notification: acp::Sessio
         }
         acp::SessionUpdate::ConfigOptionUpdate(update) => {
             thread.config_options = update.config_options.clone();
-            emit.push(settings_updated(thread));
+            emit.push(settings_updated(thread, bridge.options.yolo));
             crate::ext::session_config_updated(thread, &mut emit);
             emit_all(bridge, emit);
             return;
@@ -339,10 +339,10 @@ fn on_session_update(bridge: &mut Bridge, agent: &str, notification: acp::Sessio
     emit_all(bridge, emit);
 }
 
-pub(crate) fn settings_updated(thread: &ThreadState) -> ServerNotification {
+pub(crate) fn settings_updated(thread: &ThreadState, yolo: bool) -> ServerNotification {
     ServerNotification::ThreadSettingsUpdated(ThreadSettingsUpdatedNotification {
         thread_id: thread.id.clone(),
-        thread_settings: records::thread_settings(thread),
+        thread_settings: records::thread_settings(thread, yolo),
     })
 }
 
@@ -468,9 +468,9 @@ fn adopt_new_session(
     }
     let thread = records::thread(&state, fork.is_some());
     let reply: codex_app_server_protocol::ClientResponsePayload = if fork.is_some() {
-        records::thread_fork_response(&state).into()
+        records::thread_fork_response(&state, bridge.options.yolo).into()
     } else {
-        records::thread_start_response(&state).into()
+        records::thread_start_response(&state, bridge.options.yolo).into()
     };
     bridge.threads.insert(state);
     note_resumable(bridge, &thread_id, agent, connection);
@@ -599,7 +599,7 @@ pub(crate) fn start_turn(
             };
             if let Some(options) = options {
                 thread.config_options = options;
-                let notification = settings_updated(thread);
+                let notification = settings_updated(thread, bridge.options.yolo);
                 bridge.notify(notification);
             }
             let Some(thread) = bridge.threads.get_mut(&thread_id_owned) else {

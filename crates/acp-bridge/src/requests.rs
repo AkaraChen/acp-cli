@@ -398,7 +398,7 @@ fn settings_update(
                 && let Some(thread) = bridge.threads.get_mut(&thread_id)
             {
                 thread.config_options = options;
-                let notification = threads::settings_updated(thread);
+                let notification = threads::settings_updated(thread, bridge.options.yolo);
                 bridge.notify(notification);
             }
             match error {
@@ -443,7 +443,7 @@ fn set_config_option(
                     codex_app_server_protocol::AcpcSessionConfigSetResponse {},
                 );
                 if let Some(thread) = bridge.threads.get(&thread_id) {
-                    bridge.notify(threads::settings_updated(thread));
+                    bridge.notify(threads::settings_updated(thread, bridge.options.yolo));
                     let mut emit = Vec::new();
                     crate::ext::session_config_updated(thread, &mut emit);
                     threads::emit_all(bridge, emit);

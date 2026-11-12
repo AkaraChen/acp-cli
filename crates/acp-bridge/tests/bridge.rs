@@ -134,6 +134,45 @@ async fn edit_permission_accept_and_decline() {
 }
 
 #[tokio::test]
+async fn default_policy_is_not_yolo() {
+    let mut harness = Harness::start(HarnessConfig::default()).await;
+    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    assert_eq!(started["approvalPolicy"], "on-request");
+    assert_eq!(started["sandbox"]["type"], "externalSandbox");
+}
+
+#[tokio::test]
+async fn yolo_approves_permissions_but_still_asks_elicitations() {
+    let mut harness = Harness::start(HarnessConfig {
+        yolo: true,
+        ..HarnessConfig::default()
+    })
+    .await;
+    let started = harness.request("thread/start", json!({})).await.expect("thread/start");
+    assert_eq!(started["approvalPolicy"], "never");
+    assert_eq!(started["sandbox"]["type"], "dangerFullAccess");
+    let thread_id = started["thread"]["id"].as_str().expect("thread id").to_string();
+
+    harness.send_turn(&thread_id, "edit please").await;
+    let methods = harness.methods_until("turn/completed").await;
+    assert!(
+        !methods.iter().any(|method| method.ends_with("/requestApproval")),
+        "{methods:?}"
+    );
+    let read = harness
+        .request("thread/read", json!({"threadId": thread_id, "includeTurns": true}))
+        .await
+        .expect("thread/read");
+    let items = read["thread"]["turns"][0]["items"].as_array().expect("items");
+    let change = items.iter().find(|item| item["type"] == "fileChange").expect("file change");
+    assert_eq!(change["status"], "completed");
+
+    harness.send_turn(&thread_id, "ask me").await;
+    let request = harness.next("mcpServer/elicitation/request").await;
+    assert_eq!(request["params"]["mode"], "form");
+}
+
+#[tokio::test]
 async fn interrupt_resolves_pending_permission() {
     let mut harness = Harness::start(HarnessConfig::default()).await;
     let thread_id = harness.start_thread().await;

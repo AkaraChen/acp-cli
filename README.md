@@ -110,6 +110,7 @@ Everything `add` writes can also be edited by hand:
 
 ```toml
 agent = "claude"                         # default agent
+# yolo = true                            # approve permission requests without asking (like --yolo)
 
 [[agents]]
 slug = "claude"
@@ -133,6 +134,7 @@ args = ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
 acpc                     # new session with the default agent
 acpc -a gemini "prompt"  # pick an agent, optionally with a first prompt
 acpc -C ~/src/project    # working directory for the session
+acpc --yolo              # approve the agent's permission requests without asking
 acpc resume [-a AGENT] [ID|--last]  # reopen a session (agents with session/list + load/resume)
 acpc login               # sign in with the agent's ACP method, then exit
 acpc app-server          # headless: the Codex app-server protocol on stdio
@@ -163,6 +165,18 @@ your first prompt.
   are shown and confirmed before they run.
 
 `acpc login` signs in without opening a session.
+
+### Permissions and YOLO mode
+
+By default the agent decides what needs permission, and acpc shows each
+request it sends as an approval prompt with the agent's own options.
+
+`acpc --yolo`, or `yolo = true` in config.toml, approves every permission
+request for you: acpc picks the agent's "always allow" option (or "allow
+once" when that is all it offers), and no prompt appears. The TUI header then
+shows `permissions: YOLO mode`. Forms the agent asks you to fill in are still
+shown. YOLO mode is acpc's; an agent's own modes (such as a "bypass
+permissions" mode, picked with Shift+Tab or `/options`) are separate.
 
 ### Headless: `acpc app-server`
 

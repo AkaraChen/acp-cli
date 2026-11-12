@@ -67,6 +67,8 @@ pub struct HarnessConfig {
     pub agent_scenarios: Vec<(String, Value)>,
     /// The client runs terminal sign-in (`acpc/terminal/run`).
     pub terminal_auth: bool,
+    /// The bridge approves permission requests itself (`--yolo`).
+    pub yolo: bool,
 }
 
 impl Default for HarnessConfig {
@@ -76,6 +78,7 @@ impl Default for HarnessConfig {
             agents: vec![("mock".to_string(), "Mock".to_string())],
             agent_scenarios: Vec::new(),
             terminal_auth: false,
+            yolo: false,
         }
     }
 }
@@ -134,6 +137,7 @@ impl Harness {
             mcp_servers: Vec::new(),
             user_agent: "acpc/0.0.0".to_string(),
             resumable: Arc::default(),
+            yolo: config.yolo,
         };
         let resumable = Arc::clone(&options.resumable);
         let (tx, events) = mpsc::channel(128);
