@@ -3,7 +3,8 @@
 # agent. Needs `just build` (target/debug/acpc and acpc-mock-agent) and tmux.
 #
 # Checks: startup, a streamed answer, a tool call, /options, /agent switching
-# (new session on another agent), and a clean exit with a resume hint.
+# (forking the conversation onto another agent), and a clean exit with a
+# resume hint.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,7 +102,10 @@ wait_for "Switch agent"
 tmux send-keys -t "$session" Down
 sleep 0.2
 tmux send-keys -t "$session" Enter
-sleep 2
+# With a conversation on screen, /agent asks whether to bring it along.
+wait_for "Bring the current conversation along?"
+tmux send-keys -t "$session" Enter
+wait_for "Fork created"
 submit "hello from b"
 wait_for "You said: hello from b"
 # The prompt must have gone to the second agent.
